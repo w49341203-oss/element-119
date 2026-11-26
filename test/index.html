@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>連線測試・白板</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root { --bg:#0f1720; --card:#1b2632; --line:#2c3a48; --txt:#eef3f8; --dim:#93a4b5; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font-family:"Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif; }
+  header { display:flex; align-items:center; gap:16px; padding:14px 20px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  h1 { font-size:28px; margin:0; }
+  .ver { color:var(--dim); font-size:16px; }
+  .sp { flex:1; }
+  button { font:inherit; font-size:20px; padding:10px 18px; border-radius:10px; border:1px solid var(--line); background:#24323f; color:var(--txt); cursor:pointer; }
+  button.main { background:var(--acc); color:#04121f; border-color:var(--acc); font-weight:bold; }
+  button:disabled { opacity:.4; cursor:default; }
+  .top { display:flex; gap:24px; padding:18px 20px; align-items:center; flex-wrap:wrap; }
+  .join { display:flex; gap:18px; align-items:center; background:var(--card); border-radius:14px; padding:14px 18px; }
+  .code { font-size:72px; font-weight:bold; letter-spacing:8px; line-height:1; }
+  .qr { background:#fff; padding:8px; border-radius:8px; }
+  .join .hint { font-size:20px; color:var(--dim); max-width:260px; }
+  .summary { font-size:30px; font-weight:bold; }
+  .summary small { display:block; font-size:18px; color:var(--dim); font-weight:normal; margin-top:6px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:14px; padding:0 20px 20px; }
+  .card { background:var(--card); border:2px solid var(--line); border-radius:14px; padding:12px 14px; }
+  .card.on { border-color:var(--ok); }
+  .card.lost { border-color:var(--bad); }
+  .card h2 { margin:0 0 6px; font-size:26px; display:flex; justify-content:space-between; align-items:center; }
+  .pill { font-size:15px; padding:3px 10px; border-radius:20px; background:#33414f; color:var(--dim); font-weight:normal; }
+  .on .pill { background:var(--ok); color:#06210f; }
+  .lost .pill { background:var(--bad); color:#2a0505; }
+  .row { display:flex; justify-content:space-between; font-size:19px; padding:3px 0; border-top:1px dashed #2a3744; }
+  .row:first-of-type { border-top:none; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .wait { color:var(--wait); } .dim { color:var(--dim); }
+  .meta { font-size:14px; color:var(--dim); margin-top:6px; word-break:break-all; }
+  #testQRbox { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; flex-direction:column; gap:18px; z-index:5; }
+  #testQRbox.show { display:flex; }
+  #testQRbox .qr { padding:18px; }
+  #testQRbox p { font-size:30px; margin:0; }
+  #msg { padding:0 20px 10px; font-size:20px; color:var(--wait); min-height:28px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>連線測試・白板端</h1><span class="ver">v0.1</span>
+  <span class="sp"></span>
+  <button id="bRing" class="main" disabled>📞 全部響鈴測試</button>
+  <button id="bQR">📷 顯示掃描測試 QR</button>
+  <button id="bReset">重設結果</button>
+  <button id="bFs">全螢幕</button>
+</header>
+<div class="top">
+  <div class="join">
+    <div>
+      <div class="dim" style="font-size:18px">房間代碼</div>
+      <div class="code" id="code">····</div>
+    </div>
+    <div class="qr" id="qr"></div>
+    <div class="hint" id="joinHint">連線服務啟動中…</div>
+  </div>
+  <div class="summary" id="summary">0／9 組已連線<small>等待 iPad 加入</small></div>
+</div>
+<div id="msg"></div>
+<div class="grid" id="grid"></div>
+<div id="testQRbox"><div class="qr" id="qr2"></div><p>各組用學生頁的「📷 掃描測試」掃這個</p><button id="bQRclose">關閉</button></div>
+
+<script>
+(function () {
+  "use strict";
+  var VER = "v0.1", PREFIX = "hhmystery-", N = 9, TEST_QR = "HHMYS-TEST-A";
+  var slots = {};            // g -> { conn, st:{}, rtt, last, ua, type }
+  var peer = null, pingId = 0;
+  var $ = function (id) { return document.getElementById(id); };
+  function msg(t) { $("msg").textContent = t || ""; }
+
+  var ITEMS = [
+    ["ready", "按了準備好"], ["wake", "螢幕常亮"], ["ring", "響鈴播放"], ["voice", "語音播放"],
+    ["heard", "學生有聽到"], ["qr", "相機掃 QR"]
+  ];
+  function val(s, k) {
+    var v = s.st[k];
+    if (v === true || v === "ok") return ["✔", "ok"];
+    if (v === false || v === "fail" || v === "blocked" || v === "no") return ["✘ " + (s.st[k + "Why"] || ""), "bad"];
+    if (v === "unsupported") return ["不支援", "bad"];
+    if (v === "pending") return ["進行中…", "wait"];
+    return ["—", "dim"];
+  }
+  function render() {
+    var html = "", on = 0, pass = 0;
+    for (var g = 1; g <= N; g++) {
+      var s = slots[g], cls = "card", pill = "未連線", rows = "";
+      if (s) {
+        var alive = s.conn && s.conn.open && (Date.now() - s.last < 6500);
+        cls += alive ? " on" : " lost"; pill = alive ? "已連線" : "斷線";
+        if (alive) on++;
+        rows += '<div class="row"><span>延遲</span><span class="' + (s.rtt == null ? "dim" : s.rtt < 300 ? "ok" : "wait") + '">' + (s.rtt == null ? "—" : s.rtt + " ms") + "</span></div>";
+        rows += '<div class="row"><span>連線方式</span><span class="dim">' + (s.type || "—") + "</span></div>";
+        var all = alive;
+        ITEMS.forEach(function (it) {
+          var v = val(s, it[0]); if (v[1] !== "ok") all = false;
+          rows += '<div class="row"><span>' + it[1] + '</span><span class="' + v[1] + '">' + v[0] + "</span></div>";
+        });
+        if (all) pass++;
+        rows += '<div class="meta">' + (s.ua || "") + (s.hidden ? "　｜ 曾離開畫面 " + s.hidden + " 次" : "") + "</div>";
+      } else {
+        rows = '<div class="row"><span class="dim">等待這組的 iPad 加入</span></div>';
+      }
+      html += '<div class="' + cls + '"><h2>第 ' + g + ' 組<span class="pill">' + pill + "</span></h2>" + rows + "</div>";
+    }
+    $("grid").innerHTML = html;
+    $("summary").innerHTML = on + "／9 組已連線<small>" + (pass === N ? "🎉 9 組全部項目通過，教室環境可以上課！" : "全部項目通過：" + pass + " 組") + "</small>";
+    $("bRing").disabled = on === 0;
+  }
+
+  function send(s, obj) { try { if (s && s.conn && s.conn.open) s.conn.send(obj); } catch (e) {} }
+  function broadcast(obj) { for (var g in slots) send(slots[g], obj); }
+
+  function detectType(s) {
+    try {
+      var pc = s.conn.peerConnection; if (!pc || !pc.getStats) return;
+      pc.getStats().then(function (rep) {
+        var pairId = null, cands = {};
+        rep.forEach(function (r) {
+          if (r.type === "transport" && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId;
+          if (r.type === "local-candidate") cands[r.id] = r;
+        });
+        rep.forEach(function (r) {
+          if (r.type === "candidate-pair" && (r.id === pairId || (!pairId && r.selected) || (!pairId && r.nominated && r.state === "succeeded"))) {
+            var lc = cands[r.localCandidateId];
+            if (lc) s.type = lc.candidateType === "relay" ? "中繼轉送（較慢）" : lc.candidateType === "host" ? "區網直連" : "網路直連";
+          }
+        });
+        render();
+      });
+    } catch (e) {}
+  }
+
+  function onConn(c) {
+    var myG = null;
+    c.on("data", function (d) {
+      if (!d || typeof d !== "object") return;
+      if (d.t === "hello") {
+        var g = parseInt(d.g, 10);
+        if (!(g >= 1 && g <= N)) return;
+        var s = slots[g];
+        var dev = String(d.dev || "").slice(0, 20);
+        // 同一台 iPad（裝置代號相同）斷線重連一律放行；別台要搶同一組才擋
+        var busy = s && s.conn && s.conn !== c && s.conn.open && (Date.now() - s.last < 6500) && s.dev !== dev;
+        if (busy && !d.force) { try { c.send({ t: "taken", g: g }); } catch (e) {} return; }
+        if (s && s.conn && s.conn !== c) { try { s.conn.send({ t: "kicked" }); s.conn.close(); } catch (e) {} }
+        myG = g;
+        slots[g] = { conn: c, dev: dev, st: (s && s.st) || {}, rtt: null, last: Date.now(), ua: String(d.ua || "").slice(0, 120), hidden: (s && s.hidden) || 0 };
+        try { c.send({ t: "welcome", g: g, ver: VER }); } catch (e) {}
+        setTimeout(function () { if (slots[g] && slots[g].conn === c) detectType(slots[g]); }, 1500);
+        render(); return;
+      }
+      if (!myG || !slots[myG] || slots[myG].conn !== c) return;
+      var s2 = slots[myG]; s2.last = Date.now();
+      if (d.t === "pong" && typeof d.id === "number" && s2.pingAt && d.id === s2.pingId) { s2.rtt = Math.round(performance.now() - s2.pingAt); }
+      if (d.t === "status" && d.st && typeof d.st === "object") {
+        ITEMS.forEach(function (it) { var k = it[0]; if (k in d.st) s2.st[k] = d.st[k]; if ((k + "Why") in d.st) s2.st[k + "Why"] = String(d.st[k + "Why"]).slice(0, 40); });
+      }
+      if (d.t === "hiddenBack") s2.hidden = (s2.hidden || 0) + 1;
+      render();
+    });
+    c.on("close", function () { render(); });
+  }
+
+  setInterval(function () {
+    pingId++;
+    for (var g in slots) { var s = slots[g]; s.pingId = pingId; s.pingAt = performance.now(); send(s, { t: "ping", id: pingId }); }
+    render();
+  }, 2000);
+
+  function savedCode() { try { return localStorage.getItem("hhmysCode"); } catch (e) { return null; } }
+  function openRoom(tries, code) {
+    code = code || savedCode() || String(Math.floor(1000 + Math.random() * 9000));
+    try { localStorage.setItem("hhmysCode", code); } catch (e) {}
+    if (typeof Peer === "undefined") { $("joinHint").textContent = "連線元件載入失敗（沒有網路？）"; return; }
+    peer = new Peer(PREFIX + code);
+    peer.on("open", function () {
+      $("code").textContent = code;
+      var base = location.href.replace(/[^\/]*(\?.*)?(#.*)?$/, "");
+      var url = base + "pad.html?r=" + code;
+      $("qr").innerHTML = "";
+      if (window.QRCode) new QRCode($("qr"), { text: url, width: 150, height: 150, correctLevel: QRCode.CorrectLevel.M });
+      $("joinHint").innerHTML = location.protocol === "https:" ? "iPad 用<b>相機 App</b> 掃左邊 QR，<br>選組別 → 按「準備好了」" : "⚠ 這是電腦本機網址，iPad 打不開。<br>請用 GitHub Pages 的 https 網址開。";
+    });
+    peer.on("connection", onConn);
+    peer.on("disconnected", function () { try { peer.reconnect(); } catch (e) {} });
+    peer.on("error", function (e) {
+      if (e.type === "unavailable-id" && tries < 8) {
+        try { peer.destroy(); } catch (x) {}
+        var again = tries < 4 ? code : String(Math.floor(1000 + Math.random() * 9000));
+        setTimeout(function () { openRoom(tries + 1, again); }, tries < 4 ? 2500 : 0); return;
+      }
+      if (e.type === "peer-unavailable") return;
+      msg("連線服務錯誤（" + e.type + "）。可能是學校網路阻擋。");
+    });
+  }
+
+  $("bRing").addEventListener("click", function () {
+    for (var g in slots) { slots[g].st.ring = "pending"; slots[g].st.voice = null; slots[g].st.heard = null; }
+    broadcast({ t: "ring" }); render();
+    msg("已送出響鈴。iPad 會全螢幕來電，按接聽或 5 秒後自動接通。");
+  });
+  $("bReset").addEventListener("click", function () {
+    for (var g in slots) { var r = slots[g].st.ready, w = slots[g].st.wake; slots[g].st = { ready: r, wake: w }; slots[g].hidden = 0; }
+    broadcast({ t: "reset" }); render(); msg("");
+  });
+  $("bQR").addEventListener("click", function () {
+    $("qr2").innerHTML = "";
+    if (window.QRCode) new QRCode($("qr2"), { text: TEST_QR, width: 360, height: 360, correctLevel: QRCode.CorrectLevel.M });
+    $("testQRbox").classList.add("show");
+  });
+  $("bQRclose").addEventListener("click", function () { $("testQRbox").classList.remove("show"); });
+  $("bFs").addEventListener("click", function () {
+    var d = document, el = d.documentElement;
+    if (d.fullscreenElement || d.webkitFullscreenElement) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); }
+    else if (el.requestFullscreen) el.requestFullscreen(); else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  });
+
+  render(); openRoom(0);
+  window.__host = { slots: slots, get code() { return $("code").textContent; } };
+})();
+</script>
+</body>
+</html>

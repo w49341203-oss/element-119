@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>連線測試・平板</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<style>
+  :root { --bg:#0f1720; --card:#1b2632; --line:#2c3a48; --txt:#eef3f8; --dim:#93a4b5; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--txt); font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif; -webkit-user-select:none; user-select:none; }
+  .scr { display:none; min-height:100%; padding:24px 20px 40px; max-width:720px; margin:0 auto; }
+  .scr.show { display:block; }
+  h1 { font-size:28px; margin:8px 0 18px; }
+  .ver { position:fixed; right:10px; bottom:8px; color:var(--dim); font-size:13px; z-index:20; }
+  label { display:block; font-size:19px; color:var(--dim); margin:18px 0 8px; }
+  input { font:inherit; font-size:34px; width:100%; padding:12px 16px; border-radius:12px; border:2px solid var(--line); background:var(--card); color:var(--txt); letter-spacing:6px; text-align:center; }
+  .groups { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .groups button { font-size:30px; padding:20px 0; }
+  .groups button.sel { background:var(--acc); color:#04121f; border-color:var(--acc); font-weight:bold; }
+  button { font:inherit; font-size:22px; padding:14px 20px; border-radius:14px; border:2px solid var(--line); background:#24323f; color:var(--txt); }
+  button.big { display:block; width:100%; font-size:30px; padding:24px; margin-top:24px; background:var(--acc); color:#04121f; border-color:var(--acc); font-weight:bold; }
+  button.ghost { background:transparent; }
+  .stat { margin-top:16px; font-size:20px; min-height:28px; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .wait { color:var(--wait); } .dim { color:var(--dim); }
+  .card { background:var(--card); border-radius:14px; padding:14px 18px; margin-top:16px; }
+  .row { display:flex; justify-content:space-between; font-size:20px; padding:6px 0; border-top:1px dashed var(--line); }
+  .row:first-child { border-top:none; }
+  .badge { display:inline-block; font-size:22px; padding:6px 14px; border-radius:20px; background:var(--card); }
+  /* 來電畫面 */
+  #ring, #call { position:fixed; inset:0; z-index:10; display:none; flex-direction:column; align-items:center; justify-content:space-between; padding:70px 20px 80px; background:linear-gradient(180deg,#16324a,#0b1520); }
+  #ring.show, #call.show { display:flex; }
+  .avatar { width:150px; height:150px; border-radius:50%; background:#2f5d82; display:flex; align-items:center; justify-content:center; font-size:76px; margin:0 auto; }
+  .who { text-align:center; }
+  .who .name { font-size:40px; font-weight:bold; margin-top:18px; }
+  .who .sub { font-size:22px; color:#b9cde0; margin-top:8px; }
+  #ring .avatar { animation:pulse 1s infinite; }
+  @keyframes pulse { 0%,100% { box-shadow:0 0 0 0 rgba(79,179,255,.6); } 50% { box-shadow:0 0 0 28px rgba(79,179,255,0); } }
+  .answer { width:110px; height:110px; border-radius:50%; background:#2ecc71; border:none; font-size:52px; color:#fff; box-shadow:0 6px 20px rgba(46,204,113,.5); }
+  .answerWrap { text-align:center; font-size:22px; }
+  .answerWrap div { margin-top:12px; color:#b9cde0; }
+  .sub2 { font-size:26px; line-height:1.6; text-align:center; background:rgba(0,0,0,.35); border-radius:14px; padding:16px 18px; min-height:120px; max-width:640px; }
+  .heard { display:none; gap:14px; }
+  .heard.show { display:flex; }
+  .heard button { font-size:26px; padding:18px 28px; }
+  /* 掃描 */
+  #scan { position:fixed; inset:0; z-index:12; background:#000; display:none; flex-direction:column; align-items:center; justify-content:center; gap:16px; padding:20px; }
+  #scan.show { display:flex; }
+  #scan video { width:100%; max-width:600px; border-radius:14px; background:#111; }
+  #scanTip { font-size:24px; text-align:center; }
+</style>
+</head>
+<body>
+<div class="ver">v0.1</div>
+
+<!-- 1. 加入 -->
+<div class="scr show" id="sJoin">
+  <h1>📱 連線測試・平板端</h1>
+  <label>房間代碼（白板上的 4 位數字）</label>
+  <input id="iCode" inputmode="numeric" maxlength="4" autocomplete="off">
+  <label>我們是第幾組？</label>
+  <div class="groups" id="groups"></div>
+  <button class="big" id="bJoin">連線</button>
+  <div class="stat" id="joinStat"></div>
+</div>
+
+<!-- 2. 準備 -->
+<div class="scr" id="sReady">
+  <h1>第 <span class="gno"></span> 組・已連線 ✔</h1>
+  <p style="font-size:22px;line-height:1.6">按下面的按鈕，讓這台 iPad 可以發出聲音、螢幕保持亮著。</p>
+  <button class="big" id="bReady">✋ 我們準備好了</button>
+</div>
+
+<!-- 3. 等待 -->
+<div class="scr" id="sWait">
+  <h1>第 <span class="gno"></span> 組・等待老師測試</h1>
+  <div class="badge" id="connBadge">已連線</div>
+  <div class="card" id="checks"></div>
+  <button class="big" id="bScan">📷 掃描測試</button>
+  <button class="ghost" id="bFs" style="margin-top:16px;width:100%">全螢幕</button>
+  <p class="dim" style="font-size:18px;line-height:1.6">請停在這個畫面，不要切到別的 App，也不要讓螢幕暗掉。</p>
+</div>
+
+<!-- 被拒絕 -->
+<div class="scr" id="sTaken">
+  <h1>⚠ 第 <span class="gno"></span> 組已經有別台 iPad 在用</h1>
+  <p style="font-size:22px;line-height:1.6">如果是選錯組，請回去重選。如果原本那台壞掉了，可以把這組換到這台。</p>
+  <button class="big" id="bBack">回去重選組別</button>
+  <button style="width:100%;margin-top:16px" id="bForce">把這組換到這台 iPad</button>
+</div>
+
+<div id="ring">
+  <div class="who"><div class="avatar">📞</div><div class="name">連線測試中心</div><div class="sub">來電中…</div></div>
+  <div class="answerWrap"><button class="answer" id="bAnswer">📞</button><div>接聽　<span id="autoT">5</span> 秒後自動接通</div></div>
+</div>
+
+<div id="call">
+  <div class="who"><div class="avatar">📞</div><div class="name">連線測試中心</div><div class="sub" id="callT">通話中 00:00</div></div>
+  <div class="sub2" id="subtitle"></div>
+  <div class="heard" id="heard"><button id="bHeardY" style="background:#2ecc71;color:#fff;border-color:#2ecc71">有聽到聲音</button><button id="bHeardN">沒聽到</button></div>
+</div>
+
+<div id="scan">
+  <video id="vid" playsinline muted autoplay></video>
+  <div id="scanTip">把鏡頭對準白板上的測試 QR</div>
+  <button id="bScanX">關閉</button>
+</div>
+
+<audio id="au" playsinline preload="auto"></audio>
+
+<script>
+(function () {
+  "use strict";
+  var VER = "v0.1", PREFIX = "hhmystery-", TEST_QR = "HHMYS-TEST-A";
+  var $ = function (id) { return document.getElementById(id); };
+  var peer = null, conn = null, group = 0, code = "", joined = false, force = false, retryT = null, stopped = false;
+  var st = {};                       // 回報給白板的測試結果
+  var au = $("au");
+  var SUB = "喂？這裡是連線測試。如果你聽得到這段話，代表自動接通和語音播放都正常。";
+
+  function show(id) { ["sJoin", "sReady", "sWait", "sTaken"].forEach(function (s) { $(s).classList.toggle("show", s === id); }); }
+  function setG() { var els = document.querySelectorAll(".gno"); for (var i = 0; i < els.length; i++) els[i].textContent = group; }
+  function send(o) { try { if (conn && conn.open) conn.send(o); } catch (e) {} }
+  function report(patch) { for (var k in patch) st[k] = patch[k]; send({ t: "status", st: patch }); renderChecks(); }
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+
+  var LABELS = [["ready", "準備好了"], ["wake", "螢幕常亮"], ["ring", "響鈴"], ["voice", "語音"], ["heard", "有聽到"], ["qr", "掃 QR"]];
+  function renderChecks() {
+    var h = "";
+    LABELS.forEach(function (l) {
+      var v = st[l[0]], t = "—", c = "dim";
+      if (v === true || v === "ok") { t = "✔"; c = "ok"; }
+      else if (v === "unsupported") { t = "此 iPad 不支援"; c = "bad"; }
+      else if (v === "pending") { t = "進行中…"; c = "wait"; }
+      else if (v) { t = "✘ " + (st[l[0] + "Why"] || ""); c = "bad"; }
+      h += '<div class="row"><span>' + l[1] + '</span><span class="' + c + '">' + t + "</span></div>";
+    });
+    $("checks").innerHTML = h;
+  }
+
+  /* ---------- 加入 ---------- */
+  var devId = lsGet("hhmysDev");
+  if (!devId) { devId = Math.random().toString(36).slice(2, 10); lsSet("hhmysDev", devId); }
+  // 自動化測試用：?dev=假裝代號&g=組別&auto=1（一個網頁模擬多台 iPad）；正式使用不會帶這些參數
+  var tDev = location.search.match(/[?&]dev=(\w{1,20})/), tG = location.search.match(/[?&]g=([1-9])/), tAuto = /[?&]auto=1/.test(location.search);
+  if (tDev) devId = tDev[1];
+  var q = location.search.match(/[?&]r=(\d{4})/);
+  $("iCode").value = q ? q[1] : (lsGet("hhmysPadCode") || "");
+  var lastG = parseInt(lsGet("hhmysGroup") || "0", 10);
+  var gb = "";
+  for (var i = 1; i <= 9; i++) gb += '<button data-g="' + i + '"' + (i === lastG ? ' class="sel"' : "") + ">" + i + "</button>";
+  $("groups").innerHTML = gb;
+  if (lastG >= 1 && lastG <= 9) group = lastG;
+  $("groups").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return;
+    group = parseInt(b.dataset.g, 10);
+    var all = $("groups").querySelectorAll("button");
+    for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === b);
+  });
+  function joinStat(t, c) { $("joinStat").innerHTML = '<span class="' + (c || "") + '">' + t + "</span>"; }
+  $("bJoin").addEventListener("click", function () {
+    code = $("iCode").value.replace(/\D/g, "");
+    if (code.length !== 4) { joinStat("請輸入白板上的 4 位數代碼", "bad"); return; }
+    if (!(group >= 1 && group <= 9)) { joinStat("請選組別", "bad"); return; }
+    lsSet("hhmysPadCode", code); lsSet("hhmysGroup", String(group));
+    setG(); force = false; stopped = false; connect();
+  });
+
+  /* ---------- 連線（斷線每 3 秒自動重連，不設上限） ---------- */
+  function connBadge(t, c) { var b = $("connBadge"); b.textContent = t; b.className = "badge " + (c || ""); }
+  function scheduleRetry() { clearTimeout(retryT); retryT = setTimeout(connect, 3000); }
+  function connect() {
+    clearTimeout(retryT);
+    if (typeof Peer === "undefined") { joinStat("連線元件載入失敗（沒有網路？）", "bad"); return; }
+    if (!joined) joinStat("連線中…", "wait"); else connBadge("重新連線中…", "wait");
+    function dial() {
+      var old = conn; conn = null;
+      try { if (old) old.close(); } catch (e) {}
+      var c = peer.connect(PREFIX + code, { serialization: "json", reliable: true });
+      conn = c;
+      // 只處理「目前這條」連線的事件；舊連線關掉時不能觸發重連（不然會無限循環）
+      c.on("open", function () { if (c === conn) send({ t: "hello", g: group, dev: devId, ua: uaShort(), ver: VER, force: force }); });
+      c.on("data", function (d) { if (c === conn) onData(d); });
+      c.on("close", function () { if (c !== conn || stopped) return; if (joined) connBadge("連線中斷，自動重連中…", "bad"); scheduleRetry(); });
+      c.on("error", function () { if (c === conn && !stopped) scheduleRetry(); });
+    }
+    if (peer && !peer.destroyed && peer.open) { dial(); return; }
+    try { if (peer) peer.destroy(); } catch (e) {}
+    peer = new Peer();
+    peer.on("open", dial);
+    peer.on("disconnected", function () { try { peer.reconnect(); } catch (e) {} });
+    peer.on("error", function (e) {
+      var t = e.type === "peer-unavailable" ? "找不到這個房間（白板頁開了嗎？代碼對嗎？）自動重試中…" : "連線錯誤：" + e.type + "，自動重試中…";
+      if (!joined) joinStat(t, "bad"); else connBadge(t, "bad");
+      if (e.type !== "peer-unavailable") { try { peer.destroy(); } catch (x) {} peer = null; }
+      scheduleRetry();
+    });
+  }
+  function onData(d) {
+    if (!d || typeof d !== "object") return;
+    if (d.t === "ping") { send({ t: "pong", id: d.id }); return; }
+    if (d.t === "welcome") {
+      var first = !joined; joined = true; force = false;
+      connBadge("已連線 ✔", "ok");
+      send({ t: "status", st: st });
+      if (first) show(st.ready ? "sWait" : "sReady");
+      return;
+    }
+    if (d.t === "taken") { show("sTaken"); return; }
+    if (d.t === "kicked") { stopped = true; joined = false; clearTimeout(retryT); try { conn.close(); } catch (e) {} show("sJoin"); joinStat("這組已經換到別台 iPad 了", "bad"); return; }
+    if (d.t === "ring") { startRing(); return; }
+    if (d.t === "reset") { var r = st.ready, w = st.wake; st = { ready: r, wake: w }; renderChecks(); return; }
+  }
+  $("bBack").addEventListener("click", function () { stopped = true; clearTimeout(retryT); try { conn.close(); } catch (e) {} show("sJoin"); joinStat(""); });
+  $("bForce").addEventListener("click", function () { force = true; send({ t: "hello", g: group, dev: devId, ua: uaShort(), ver: VER, force: true }); });
+
+  function uaShort() {
+    var u = navigator.userAgent, m = u.match(/OS (\d+)_(\d+)/), v = u.match(/Version\/([\d.]+)/);
+    var ipad = /iPad/.test(u) || (/Macintosh/.test(u) && navigator.maxTouchPoints > 1);
+    return (ipad ? "iPad" : /Android/.test(u) ? "Android" : "電腦") + (m ? " iOS " + m[1] + "." + m[2] : "") + (v ? " Safari " + v[1] : "");
+  }
+
+  /* ---------- 準備好了：解鎖聲音＋螢幕常亮 ---------- */
+  try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+  var wakeLock = null;
+  function askWake() {
+    if (!("wakeLock" in navigator)) { report({ wake: "unsupported" }); return; }
+    navigator.wakeLock.request("screen").then(function (l) {
+      wakeLock = l; report({ wake: "ok" });
+      l.addEventListener("release", function () { wakeLock = null; });
+    }).catch(function (e) { report({ wake: "fail", wakeWhy: e.name }); });
+  }
+  $("bReady").addEventListener("click", function () {
+    au.loop = false; au.src = "silent.wav";
+    var p = au.play();
+    var done = function (ok, why) { report(ok ? { ready: true } : { ready: false, readyWhy: why }); show("sWait"); };
+    if (p && p.then) p.then(function () { done(true); }).catch(function (e) { done(false, e.name); }); else done(true);
+    askWake();
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") {
+      send({ t: "hiddenBack" });
+      if (st.ready && !wakeLock) askWake();
+      if (joined && (!conn || !conn.open)) connect();
+    }
+  });
+  $("bFs").addEventListener("click", function () {
+    var d = document, el = d.documentElement;
+    if (d.fullscreenElement || d.webkitFullscreenElement) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return; }
+    var f = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (f) { try { var r = f.call(el); if (r && r.catch) r.catch(function () {}); } catch (e) {} }
+  });
+
+  /* ---------- 來電 ---------- */
+  var autoTimer = null, ringing = false, callTimer = null;
+  function startRing() {
+    if (ringing) return;
+    ringing = true; report({ ring: "pending", voice: null, heard: null });
+    $("ring").classList.add("show"); $("call").classList.remove("show"); $("heard").classList.remove("show");
+    au.loop = true; au.src = "ring.wav";
+    var p = au.play();
+    if (p && p.then) p.then(function () { report({ ring: "ok" }); }).catch(function (e) { report({ ring: "blocked", ringWhy: e.name === "NotAllowedError" ? "沒先按準備好" : e.name }); });
+    var left = 5; $("autoT").textContent = left;
+    clearInterval(autoTimer);
+    autoTimer = setInterval(function () { left--; $("autoT").textContent = Math.max(0, left); if (left <= 0) answer(); }, 1000);
+  }
+  function answer() {
+    if (!ringing) return;
+    ringing = false; clearInterval(autoTimer);
+    au.pause(); au.loop = false;
+    $("ring").classList.remove("show"); $("call").classList.add("show");
+    $("subtitle").textContent = SUB;
+    var t0 = Date.now(); clearInterval(callTimer);
+    callTimer = setInterval(function () { var s = Math.floor((Date.now() - t0) / 1000); $("callT").textContent = "通話中 00:" + (s < 10 ? "0" : "") + s; }, 500);
+    au.onended = function () { clearInterval(callTimer); $("callT").textContent = "通話結束"; $("heard").classList.add("show"); };
+    au.onerror = function () { report({ voice: "fail", voiceWhy: "檔案載入失敗" }); au.onended(); };
+    au.src = "test_voice.wav";
+    var p = au.play();
+    if (p && p.then) p.then(function () { report({ voice: "ok" }); }).catch(function (e) { report({ voice: "blocked", voiceWhy: e.name }); au.onended(); });
+  }
+  $("bAnswer").addEventListener("click", answer);
+  function heard(v) { report({ heard: v ? "ok" : "no", heardWhy: v ? "" : "學生說沒聽到" }); $("call").classList.remove("show"); }
+  $("bHeardY").addEventListener("click", function () { heard(true); });
+  $("bHeardN").addEventListener("click", function () { heard(false); });
+
+  /* ---------- 掃 QR（網頁內相機，不用 iPad 相機 App） ---------- */
+  var stream = null, scanT = null, cvs = document.createElement("canvas"), ctx = cvs.getContext("2d", { willReadFrequently: true });
+  function stopScan() { clearInterval(scanT); if (stream) stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; $("scan").classList.remove("show"); }
+  $("bScan").addEventListener("click", function () {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { report({ qr: "fail", qrWhy: "不能開相機（網址要 https）" }); return; }
+    $("scanTip").textContent = "把鏡頭對準白板上的測試 QR";
+    $("scan").classList.add("show");
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false }).then(function (s) {
+      stream = s; var v = $("vid"); v.srcObject = s; var pp = v.play(); if (pp && pp.catch) pp.catch(function () {});
+      scanT = setInterval(function () {
+        if (!v.videoWidth || typeof jsQR === "undefined") return;
+        var w = 640, h = Math.round(640 * v.videoHeight / v.videoWidth);
+        cvs.width = w; cvs.height = h; ctx.drawImage(v, 0, 0, w, h);
+        var r = jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: "dontInvert" });
+        if (!r || !r.data) return;
+        if (r.data === TEST_QR) { report({ qr: "ok" }); $("scanTip").innerHTML = '<span class="ok">✔ 掃描成功！</span>'; setTimeout(stopScan, 900); clearInterval(scanT); }
+        else $("scanTip").textContent = "這不是測試用的 QR，請對準白板上的那一個";
+      }, 200);
+    }).catch(function (e) {
+      $("scanTip").textContent = "相機打不開：請到「設定 → Safari → 相機」選允許，再重新整理";
+      report({ qr: "fail", qrWhy: e.name === "NotAllowedError" ? "相機權限被拒" : e.name });
+    });
+  });
+  $("bScanX").addEventListener("click", stopScan);
+
+  renderChecks();
+  if (tG) { group = parseInt(tG[1], 10); var bs = $("groups").querySelectorAll("button"); for (var k = 0; k < bs.length; k++) bs[k].classList.toggle("sel", +bs[k].dataset.g === group); }
+  if (tAuto && $("iCode").value.length === 4 && group) { code = $("iCode").value; setG(); connect(); }
+  window.__pad = { get st() { return st; }, get joined() { return joined; }, answer: answer };
+})();
+</script>
+</body>
+</html>
