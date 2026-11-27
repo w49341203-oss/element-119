@@ -7,8 +7,8 @@
 <title>消失的第 119 號元素・白板</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="content.js?v=1.0"></script>
-<script src="audio/list.js?v=1.0"></script>
+<script src="content.js?v=2.0"></script>
+<script src="audio/list.js?v=2.0"></script>
 <style>
   :root { --bg:#0d141d; --card:#172230; --card2:#1f2d3c; --line:#2c3b4a; --txt:#f1f5f9; --dim:#9fb0c1; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; --acc2:#9b7bff; }
   * { box-sizing:border-box; }
@@ -85,14 +85,14 @@
   <span class="sp"></span>
   <span id="clock" class="hide">25:00</span>
   <span class="ctrl" id="ctrlLobby">
-    <select id="limit" style="font:inherit;font-size:20px;padding:8px;border-radius:10px;background:var(--card2);color:var(--txt)"><option value="20">闖關 20 分鐘</option><option value="25" selected>闖關 25 分鐘</option><option value="30">闖關 30 分鐘</option><option value="35">闖關 35 分鐘</option></select>
+    <select id="limit" style="font:inherit;font-size:20px;padding:8px;border-radius:10px;background:var(--card2);color:var(--txt)"><option value="40">闖關 40 分鐘</option><option value="45">闖關 45 分鐘</option><option value="50" selected>闖關 50 分鐘</option><option value="55">闖關 55 分鐘</option><option value="60">闖關 60 分鐘</option></select>
     <button id="bRules">📜 遊戲規則</button>
     <button class="pri" id="bStart" disabled>▶ 開始</button>
   </span>
   <span class="ctrl hide" id="ctrlPlay">
     <button id="bPause">⏸ 全班暫停</button>
     <button id="bPlus">＋5 分鐘</button>
-    <button class="pri" id="bFinale">🎬 進入結局</button>
+    <button class="pri" id="bFinale">📨 開始情報交換</button>
   </span>
   <button id="bFs">⛶ 全螢幕</button>
   <button class="warn" id="bReset">重置</button>
@@ -111,6 +111,7 @@
   </div>
 </div>
 
+<div id="exBanner" class="hide" style="margin:12px 20px 0;padding:14px 20px;border-radius:14px;background:#2a2150;border:2px solid var(--acc2);font-size:26px;display:flex;gap:18px;align-items:center;flex-wrap:wrap"></div>
 <div id="play" class="hide">
   <div><table class="prog" id="prog"></table></div>
   <div class="map"><h2>🗺 實驗室地圖</h2><div id="map"></div><div class="dim" style="font-size:17px;margin-top:6px">圓點＝各組最後掃描 QR 的位置。點左邊任一組可看詳細狀況。</div></div>
@@ -136,8 +137,8 @@
   var PUZ = []; STG[1].forEach(function (st) { st.forEach(function (p) { PUZ.push({ id: p.id, title: p.title }); }); });
 
   /* ---------- 狀態（存在 localStorage：白板當機重開可接回） ---------- */
-  function newGS() { return { ready: false, answered: false, stage: 0, unlocked: false, pz: 0, step: 0, stepAt: 0, hints: {}, hintCount: 0, wrong: {}, doneAt: null, stageAt: [], bonus: [null, null, null], vote: null, lastLoc: null, lastLocAt: 0 }; }
-  function newH(code) { var gr = {}; for (var g = 1; g <= N; g++) gr[g] = newGS(); return { code: code, phase: "lobby", startAt: 0, pausedAt: 0, pausedTotal: 0, limitMin: G.RULES.defaultMin, revealed: false, tIdx: 0, rank: null, groups: gr }; }
+  function newGS() { return { accuse: null, ready: false, answered: false, stage: 0, unlocked: false, pz: 0, step: 0, stepAt: 0, hints: {}, hintCount: 0, wrong: {}, doneAt: null, stageAt: [], bonus: [null, null, null], vote: null, lastLoc: null, lastLocAt: 0 }; }
+  function newH(code) { var gr = {}; for (var g = 1; g <= N; g++) gr[g] = newGS(); return { code: code, phase: "lobby", startAt: 0, pausedAt: 0, pausedTotal: 0, limitMin: G.RULES.defaultMin, revealed: false, revealStep: 0, exAt: 0, tIdx: 0, rank: null, groups: gr }; }
   var H = null;
   try { H = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (e) {}
   if (!H || !H.groups) H = newH(null);
@@ -152,7 +153,7 @@
   /* ---------- 連線 ---------- */
   var peer = null;
   function send(g, o) { var s = slots[g]; try { if (s && s.conn && s.conn.open) s.conn.send(o); } catch (e) {} }
-  function stateFor(g) { return { t: "state", phase: H.phase, paused: !!H.pausedAt, revealed: H.revealed, gs: H.groups[g], rank: H.phase === "end" ? H.rank : null }; }
+  function stateFor(g) { return { t: "state", phase: H.phase, paused: !!H.pausedAt, revealStep: H.revealStep || 0, runId: H.startAt, gs: H.groups[g], rank: H.phase === "end" ? H.rank : null }; }
   function push(g) { send(g, stateFor(g)); }
   function pushAll() { for (var g = 1; g <= N; g++) push(g); }
   function alive(g) { var s = slots[g]; return !!(s && s.conn && s.conn.open && now() - s.last < 7000); }
@@ -203,14 +204,15 @@
   }
 
   /* ---------- 處理平板送來的事件（所有規則在這裡把關） ---------- */
+  function playing() { return H.phase === "play" || H.phase === "exchange"; }
   function handle(g, d) {
     var s = H.groups[g], P = STG[g];
     if (d.t === "ready") { s.ready = true; }
-    else if (d.t === "answered") { if (H.phase === "play" && !s.answered) { s.answered = true; s.stepAt = now(); } }
-    else if (d.t === "scan") { if (H.phase === "play" && !H.pausedAt && s.stage < 4 && d.stage === s.stage && d.loc === ROUTE[g][s.stage] && !s.unlocked) { s.unlocked = true; s.lastLoc = d.loc; s.lastLocAt = now(); s.stepAt = now(); } }
+    else if (d.t === "answered") { if ((H.phase === "play" || H.phase === "exchange") && !s.answered) { s.answered = true; s.stepAt = now(); } }
+    else if (d.t === "scan") { if (playing() && !H.pausedAt && s.stage < 4 && d.stage === s.stage && d.loc === ROUTE[g][s.stage] && !s.unlocked) { s.unlocked = true; s.lastLoc = d.loc; s.lastLocAt = now(); s.stepAt = now(); } }
     else if (d.t === "scanWrong") { if (G.LOCS[d.loc]) { s.lastLoc = d.loc; s.lastLocAt = now(); } }
     else if (d.t === "step") {
-      if (H.phase !== "play" || H.pausedAt || s.stage >= 4 || !s.unlocked) return;
+      if (!playing() || H.pausedAt || s.stage >= 4 || !s.unlocked) return;
       if (d.stage !== s.stage || d.pz !== s.pz || d.step !== s.step) return;   // 重複送出或過期的答案：不理
       var p = P[s.stage][s.pz];
       if (!d.ok) { s.wrong[p.id] = (s.wrong[p.id] || 0) + 1; }
@@ -221,8 +223,12 @@
       }
     }
     else if (d.t === "hint") { if (typeof d.id === "string" && d.id.length < 8 && !s.hints[d.id]) { s.hints[d.id] = 1; s.hintCount++; } }
-    else if (d.t === "bonus") { var i = d.i; if (H.phase === "play" && s.stage >= 4 && (i === 0 || i === 1 || i === 2) && s.bonus[i] == null) s.bonus[i] = d.ok === true; }
-    else if (d.t === "vote") { var w = parseInt(d.who, 10); if (H.phase === "vote" && s.vote == null && w >= 1 && w <= 9) s.vote = w; }
+    else if (d.t === "bonus") { var i = d.i; if (playing() && s.stage >= 4 && (i === 0 || i === 1 || i === 2) && s.bonus[i] == null) s.bonus[i] = d.ok === true; }
+    else if (d.t === "accuse") {
+      if (H.phase !== "accuse" || s.accuse || !d.ans || typeof d.ans !== "object") return;
+      var A = {}; for (var qi = 0; qi < G.ACCUSE.length; qi++) { var q = G.ACCUSE[qi], v = d.ans[q.id]; if (!(v >= 0 && v < q.o.length && v === Math.floor(v))) return; A[q.id] = v; }
+      s.accuse = A;
+    }
     else return;
     save(); push(g); render();
   }
@@ -274,25 +280,28 @@
   function render() {
     var ph = H.phase;
     $("lobby").classList.toggle("hide", ph !== "lobby");
-    $("play").classList.toggle("hide", ph !== "play");
-    $("fin").classList.toggle("hide", ph === "lobby" || ph === "play");
+    $("play").classList.toggle("hide", ph !== "play" && ph !== "exchange");
+    $("exBanner").classList.toggle("hide", ph !== "exchange");
+    $("fin").classList.toggle("hide", ph === "lobby" || ph === "play" || ph === "exchange");
     $("ctrlLobby").classList.toggle("hide", ph !== "lobby");
-    $("ctrlPlay").classList.toggle("hide", ph !== "play");
-    $("clock").classList.toggle("hide", ph !== "play");
+    $("ctrlPlay").classList.toggle("hide", ph !== "play" && ph !== "exchange");
+    $("clock").classList.toggle("hide", ph !== "play" && ph !== "exchange");
     if (ph === "lobby") $("slots").innerHTML = slotsHTML();
-    if (ph === "play") { $("prog").innerHTML = progHTML(); $("map").innerHTML = mapHTML(); $("bPause").textContent = H.pausedAt ? "▶ 繼續" : "⏸ 全班暫停"; }
-    if (ph !== "lobby" && ph !== "play") renderFinale();
+    if (ph === "play" || ph === "exchange") { $("prog").innerHTML = progHTML(); $("map").innerHTML = mapHTML(); $("bPause").textContent = H.pausedAt ? "▶ 繼續" : "⏸ 全班暫停"; }
+    if (ph === "exchange") exBanner();
+    if (ph !== "lobby" && ph !== "play" && ph !== "exchange") renderFinale();
   }
   setInterval(function () {
-    if (H.phase === "play") {
+    if (H.phase === "play" || H.phase === "exchange") {
       var left = H.limitMin * 60000 - elapsed(), c = $("clock");
       c.textContent = (H.pausedAt ? "⏸ " : "") + fmt(left);
       c.classList.toggle("low", left < 3 * 60000 && left >= 0); c.classList.toggle("over", left < 0);
       $("bFinale").classList.toggle("pri", true);
       var allDone = true; for (var g = 1; g <= N; g++) if ((H.groups[g].ready || H.groups[g].answered) && H.groups[g].stage < 4) allDone = false;
-      $("bFinale").textContent = (left < 0 || allDone) ? "🎬 進入結局（時間到／都完成了）" : "🎬 進入結局";
+      if (H.phase === "play") $("bFinale").textContent = (left < 0 || allDone) ? "📨 開始情報交換（時間到／都完成了）" : "📨 開始情報交換";
+      else $("bFinale").textContent = "⚖️ 開始指認";
     }
-    if (H.phase === "lobby" || H.phase === "play") render();
+    if (H.phase === "lobby" || H.phase === "play" || H.phase === "exchange") render();
   }, 1000);
 
   /* ---------- 老師按鈕 ---------- */
@@ -318,10 +327,18 @@
   };
   $("bPlus").onclick = function () { H.limitMin += 5; save(); };
   $("bFinale").onclick = function () {
-    if (!confirm("確定進入結局？各組的闖關會停止。")) return;
+    if (H.phase === "play") {
+      if (!confirm("開始情報交換？各組會拿到自己的獨家情報（還沒過完的組可以繼續闖關）。")) return;
+      H.phase = "exchange"; H.exAt = now(); save(); pushAll(); render(); return;
+    }
+    if (!confirm("開始最後指認？各組的闖關和深層調查會停止。")) return;
     if (H.pausedAt) { H.pausedTotal += now() - H.pausedAt; H.pausedAt = 0; }
-    H.phase = "testimony"; H.tIdx = 0; H.endAt = elapsed(); save(); pushAll(); render();
+    H.phase = "accuse"; H.endAt = elapsed(); save(); pushAll(); render();
   };
+  function exBanner() {
+    var left = G.RULES.exchangeMin * 60000 - (now() - (H.exAt || now()));
+    $("exBanner").innerHTML = "<b>📨 情報交換時間</b><span style='font-variant-numeric:tabular-nums'>" + (left >= 0 ? "建議剩 " + fmt(left) : "⏰ 建議時間到") + "</span><span style='font-size:20px;color:var(--dim)'>每組都拿到一條只有自己知道的情報。走去別組問問看——但有人可能在說謊！</span>";
+  }
   $("bReset").onclick = function () {
     if (!confirm("確定重置？所有組的進度都會清空（換下一個班時使用）。")) return;
     var code = H.code; H = newH(code); save(); pushAll(); render(); $("ovl").classList.add("hide");
@@ -331,8 +348,10 @@
       "1. 老師按開始後，每組會接到一通電話，照來電者的簡訊去實驗室找線索。<br>" +
       "2. 看到牆上的 QR，用<b>平板裡的「掃描 QR」</b>掃，不要用 iPad 相機 App。<br>" +
       "3. 每一關都要用到第六章的知識。答錯會被鎖 " + G.RULES.lockSec + " 秒；看提示總時間 +" + G.RULES.hintSec + " 秒。<br>" +
-      "4. 先完成的組有加碼挑戰：每題只能答一次，答對 −" + G.RULES.bonusSec + " 秒。<br>" +
-      "5. 最後要找出：<b>九個打電話的人裡面，誰在說謊</b>。猜對 −" + G.RULES.voteSec + " 秒。</div>");
+      "4. 每到一站先<b>動手做實驗</b>，過關拿到一張<b>證物卡</b>（在「🔍 案件」）。<br>" +
+      "5. 先完成的組可以做<b>深層調查</b>：每題只能答一次，答對拿到深層線索。<br>" +
+      "6. 老師宣布<b>情報交換</b>後，每組會拿到一條只有自己知道的情報——要去別組問，但有人可能在說謊！<br>" +
+      "7. 最後指認：<b>兇手是誰、怎麼開保險箱、樣品藏在哪</b>（＋匿名者是誰）。</div>");
   };
   $("bFs").onclick = function () {
     var d = document, el = d.documentElement;
@@ -357,63 +376,75 @@
     if ($("mHint")) $("mHint").onclick = function () { send(g, { t: "teacherHint" }); $("mHint").textContent = "✔ 已送出"; $("mHint").disabled = true; };
   });
 
-  /* ---------- 結局 ---------- */
+  /* ---------- 結局：指認、揭曉、計分 ---------- */
+  function joined(g) { var s = H.groups[g]; return s.ready || s.answered; }
+  function tally(qid) { var c = {}; for (var g = 1; g <= N; g++) { var a = H.groups[g].accuse; if (a) c[a[qid]] = (c[a[qid]] || 0) + 1; } return c; }
+  // 秘密任務是否成功
+  function secretOK(g) {
+    if (g === 8) { var c = tally("who"), zhou = c[1] || 0, mx = 0; for (var k in c) mx = Math.max(mx, c[k]); return zhou > 0 && zhou >= mx; }
+    if (g === 9) { var c2 = tally("anon"); return (c2[0] || 0) <= 3; }
+    return false;
+  }
   function computeRank() {
     var R = G.RULES, list = [];
     for (var g = 1; g <= N; g++) {
-      var s = H.groups[g]; if (!s.ready && !s.answered) continue;
-      var bc = s.bonus.filter(function (b) { return b === true; }).length, vt = s.vote != null && !G.CALLERS[s.vote].truth;
+      if (!joined(g)) continue;
+      var s = H.groups[g], bc = s.bonus.filter(function (b) { return b === true; }).length;
+      var acc = 0, accN = 0; G.ACCUSE.forEach(function (q) { if (s.accuse && s.accuse[q.id] === q.a) { acc += q.sec; accN++; } });
+      var sec = G.SECRET[g] && secretOK(g) ? G.SECRET[g].sec : 0;
       var base = s.doneAt != null ? s.doneAt : (H.endAt || elapsed());
-      var fin = base + s.hintCount * R.hintSec * 1000 - bc * R.bonusSec * 1000 - (vt ? R.voteSec * 1000 : 0);
-      var text = (s.stage >= 4 ? "完成用時 " + fmt(base) : "完成 " + s.stage + "/4 關") + (s.hintCount ? "　＋提示 " + fmt(s.hintCount * R.hintSec * 1000) : "") + (bc ? "　－加碼 " + fmt(bc * R.bonusSec * 1000) : "") + (vt ? "　－推理 " + fmt(R.voteSec * 1000) : "") + (s.stage >= 4 ? "　＝ " + fmt(fin) : "");
-      list.push({ g: g, done: s.stage >= 4, stage: s.stage, fin: fin, text: text, hint: s.hintCount, bonus: bc, vote: s.vote, voteOk: vt, base: base });
+      var fin = base + s.hintCount * R.hintSec * 1000 - bc * R.bonusSec * 1000 - acc * 1000 - sec * 1000;
+      var text = (s.stage >= 4 ? "完成用時 " + fmt(base) : "完成 " + s.stage + "/4 關") + (s.hintCount ? "　＋提示 " + fmt(s.hintCount * R.hintSec * 1000) : "") + (bc ? "　－深層 " + fmt(bc * R.bonusSec * 1000) : "") + (acc ? "　－指認對 " + accN + " 題 " + fmt(acc * 1000) : "") + (sec ? "　－秘密任務 " + fmt(sec * 1000) : "") + (s.stage >= 4 ? "　＝ " + fmt(fin) : "");
+      list.push({ g: g, done: s.stage >= 4, stage: s.stage, fin: fin, text: text, bonus: bc, accN: accN, secret: !!sec, base: base });
     }
     list.sort(function (a, b) { if (a.done !== b.done) return a.done ? -1 : 1; if (!a.done && a.stage !== b.stage) return b.stage - a.stage; return a.fin - b.fin; });
     list.forEach(function (r, i) { r.place = i + 1; });
     return list;
   }
-  function tcards(showAll) {
-    var h = '<div class="tgrid">';
-    for (var k = 1; k <= 9; k++) {
-      var c = G.CALLERS[k], shown = showAll || k <= H.tIdx, liar = H.revealed && !c.truth;
-      h += '<div class="tcard' + (shown ? "" : " dimm") + (liar ? " liar" : "") + '"><div class="hd"><span class="av">' + c.av + "</span>" + k + "．" + esc(c.name) + '<span class="dim" style="font-size:17px;font-weight:normal">' + esc(c.role) + "</span></div>" + (shown ? "「" + esc(c.testimony) + "」" : "……") + (liar ? '<div class="why">❌ ' + esc(c.why) + "</div>" : "") + "</div>";
-    }
-    return h + "</div>";
+  function suspectsHTML(mark) {
+    return '<div class="tgrid" style="grid-template-columns:repeat(4,1fr)">' + G.SUSPECTS.map(function (s) {
+      var culprit = mark && s.id === G.CULPRIT;
+      return '<div class="tcard' + (culprit ? " liar" : "") + '"><div class="hd"><span class="av">' + s.av + "</span>" + esc(s.name) + '</div><div class="dim" style="font-size:18px">' + esc(s.role) + '</div><div style="font-size:19px;margin-top:6px">' + s.facts.map(esc).join("<br>") + "</div></div>";
+    }).join("") + "</div>";
+  }
+  function barsHTML(q, showAns) {
+    var c = tally(q.id), mx = 1; for (var k in c) mx = Math.max(mx, c[k]);
+    return '<div style="font-size:24px;font-weight:bold;margin:14px 0 4px">' + esc(q.q) + '</div><div class="bars">' + q.o.map(function (o, i) {
+      return '<div class="barrow' + (showAns && i === q.a ? " liar" : "") + '" style="grid-template-columns:420px 1fr 50px"><span style="font-size:19px">' + (showAns && i === q.a ? "✅ " : "") + esc(o) + '</span><div><div class="b" style="width:' + ((c[i] || 0) / mx * 100) + '%"></div></div><span>' + (c[i] || 0) + "</span></div>";
+    }).join("") + "</div>";
   }
   function renderFinale() {
-    var ph = H.phase, ctl = "", body = "";
-    if (ph === "testimony") {
-      ctl = (H.tIdx < 9 ? '<button class="pri" id="fNext">▶ 下一位證詞（' + (H.tIdx + 1) + '/9）</button><button id="fAll">全部顯示</button>' : "") + '<button class="pri" id="fVote"' + (H.tIdx < 9 ? " disabled" : "") + '>🗳 開始投票</button>';
-      body = '<h2 style="font-size:34px;margin:0 0 12px">🗣 九位來電者的證詞——其中只有一個人說的話違反科學</h2>' + tcards(false);
-    } else if (ph === "vote") {
-      var n = 0, tot = 0; for (var g = 1; g <= N; g++) { if (H.groups[g].ready || H.groups[g].answered) { tot++; if (H.groups[g].vote != null) n++; } }
-      ctl = '<span style="font-size:30px;align-self:center">🗳 已投票：' + n + " / " + tot + ' 組</span><button class="pri" id="fReveal">🔍 揭曉</button>';
-      body = '<h2 style="font-size:34px;margin:0 0 12px">各組討論，用平板投票：誰在說謊？</h2>' + tcards(true);
+    var ph = H.phase, ctl = "", body = "", rs = H.revealStep || 0, CH = G.REVEAL_STEPS;
+    if (ph === "accuse") {
+      var n = 0, tot = 0; for (var g = 1; g <= N; g++) if (joined(g)) { tot++; if (H.groups[g].accuse) n++; }
+      ctl = '<span style="font-size:30px;align-self:center">⚖️ 已送出指認：' + n + " / " + tot + ' 組</span><button class="pri" id="fReveal">🔍 揭曉</button>';
+      body = '<h2 style="font-size:34px;margin:0 0 12px">各組討論後，用平板送出最後指認：兇手、手法、藏匿地點（＋匿名者是誰）</h2>' + suspectsHTML(false);
     } else if (ph === "reveal") {
-      ctl = '<button class="pri" id="fTwist">🎭 真相</button><button class="pri" id="fRank">🏆 最終排名</button>';
-      var cnt = {}, max = 1; for (var g2 = 1; g2 <= N; g2++) { var v = H.groups[g2].vote; if (v) { cnt[v] = (cnt[v] || 0) + 1; max = Math.max(max, cnt[v]); } }
-      body = '<div style="display:grid;grid-template-columns:1fr 1.3fr;gap:20px"><div><h2 style="font-size:30px;margin-top:0">投票結果</h2><div class="bars">';
-      for (var k2 = 1; k2 <= 9; k2++) { var cc = G.CALLERS[k2]; body += '<div class="barrow' + (!cc.truth ? " liar" : "") + '"><span>' + cc.av + " " + esc(cc.name) + '</span><div><div class="b" style="width:' + ((cnt[k2] || 0) / max * 100) + '%"></div></div><span>' + (cnt[k2] || 0) + "</span></div>"; }
-      body += "</div></div><div>" + tcards(true) + "</div></div>";
+      var last = 1 + CH.length + 1;   // 1＝公布答案；接著逐條推理；最後＝秘密任務
+      ctl = (rs < last ? '<button class="pri" id="fStep">▶ 下一步（' + rs + "/" + last + "）</button>" : "") + '<button id="fTwist"' + (rs < last ? " disabled" : "") + '>🎭 反轉與博士留言</button><button class="pri" id="fRank"' + (rs < last ? " disabled" : "") + ">🏆 最終排名</button>";
+      body = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:24px"><div><h2 style="font-size:30px;margin-top:0">各組的指認</h2>' + G.ACCUSE.map(function (q) { return barsHTML(q, rs >= 1); }).join("") + "</div><div>";
+      if (rs >= 2) body += '<h2 style="font-size:30px;margin-top:0">🧠 推理過程</h2>' + CH.slice(0, rs - 1).map(function (t, i) { return '<div class="tcard" style="min-height:0;margin-bottom:10px;' + (i === CH.length - 1 ? "border-color:var(--bad)" : "") + '">' + esc(t) + "</div>"; }).join("");
+      if (rs >= last) {
+        body += '<h2 style="font-size:30px">🤫 秘密任務</h2>';
+        [8, 9].forEach(function (g) { if (!joined(g)) return; body += '<div class="tcard" style="min-height:0;margin-bottom:10px"><b>第 ' + g + " 組：" + esc(G.SECRET[g].t) + "</b><br>" + esc(G.SECRET[g].d) + "<br>" + (secretOK(g) ? '<span class="ok">✔ 任務成功</span>' : '<span class="bad">✘ 任務失敗</span>') + "</div>"; });
+      }
+      body += "</div></div>";
     } else if (ph === "end") {
       ctl = '<button id="fCsv">⬇ 下載本班成績</button><button id="fStat">📊 錯題統計</button><button id="fLin">🔁 重播博士留言</button>';
-      var R = H.rank || [];
-      body = '<h2 style="font-size:36px;margin:0 0 8px">🏆 最終排名</h2><div class="dim" style="font-size:19px">最終時間 ＝ 完成用時 ＋ 提示×' + G.RULES.hintSec + " 秒 － 加碼答對×" + G.RULES.bonusSec + " 秒 － 推理正確 " + G.RULES.voteSec + ' 秒（時間越少越前面；沒完成 4 關的排在後面）</div><table class="rank"><tr><th>名次</th><th>組別</th><th>計算</th></tr>' +
-        R.map(function (r) { var c = G.CALLERS[r.g]; return "<tr><td style='font-size:30px;font-weight:bold'>" + (r.place <= 3 ? ["🥇", "🥈", "🥉"][r.place - 1] : r.place) + "</td><td>" + c.av + " 第 " + r.g + " 組（" + esc(c.name) + "）</td><td>" + esc(r.text) + "</td></tr>"; }).join("") + "</table>";
+      var Rk = H.rank || [], RU = G.RULES;
+      body = '<h2 style="font-size:36px;margin:0 0 8px">🏆 最終排名</h2><div class="dim" style="font-size:19px">最終時間 ＝ 完成用時 ＋ 提示×' + RU.hintSec + " 秒 － 深層線索×" + RU.bonusSec + " 秒 － 指認答對（兇手 60、手法 30、地點 30、匿名者 30 秒）－ 秘密任務成功 60 秒（時間越少越前面；沒完成 4 關的排在後面）</div><table class=\"rank\"><tr><th>名次</th><th>組別</th><th>計算</th></tr>" +
+        Rk.map(function (r) { var c = G.CALLERS[r.g]; return "<tr><td style='font-size:30px;font-weight:bold'>" + (r.place <= 3 ? ["🥇", "🥈", "🥉"][r.place - 1] : r.place) + "</td><td>" + c.av + " 第 " + r.g + " 組（" + esc(c.name) + "）</td><td>" + esc(r.text) + "</td></tr>"; }).join("") + "</table>";
     }
     $("finCtrl").innerHTML = ctl; $("finBody").innerHTML = body;
-    if ($("fNext")) $("fNext").onclick = function () { H.tIdx = Math.min(9, H.tIdx + 1); save(); render(); playAudio("testi_" + H.tIdx); };
-    if ($("fAll")) $("fAll").onclick = function () { H.tIdx = 9; save(); render(); };
-    if ($("fVote")) $("fVote").onclick = function () { H.phase = "vote"; save(); pushAll(); render(); };
-    if ($("fReveal")) $("fReveal").onclick = function () { H.phase = "reveal"; H.revealed = true; save(); pushAll(); render(); };
+    if ($("fReveal")) $("fReveal").onclick = function () { if (!confirm("揭曉？還沒送出的組就不能再送了。")) return; H.phase = "reveal"; H.revealStep = 0; save(); pushAll(); render(); };
+    if ($("fStep")) $("fStep").onclick = function () { H.revealStep = (H.revealStep || 0) + 1; save(); pushAll(); render(); };
     if ($("fTwist")) $("fTwist").onclick = twist;
     if ($("fRank")) $("fRank").onclick = function () { H.rank = computeRank(); H.phase = "end"; save(); pushAll(); render(); };
     if ($("fCsv")) $("fCsv").onclick = csv;
     if ($("fStat")) $("fStat").onclick = stats;
     if ($("fLin")) $("fLin").onclick = linMsg;
   }
-  // 讓 vote 階段的已投票數即時更新
-  setInterval(function () { if (H.phase === "vote") render(); }, 1500);
+  setInterval(function () { if (H.phase === "accuse") render(); }, 1500);
 
   function ovl(t, s, btns) {
     $("ovl").classList.remove("hide"); $("ovlT").innerHTML = t; $("ovlS").innerHTML = s || "";
@@ -436,8 +467,8 @@
     modal("<h2 style='margin-top:0'>📊 錯題統計（全班答錯次數）</h2><table class='rank'><tr><th>小關卡</th><th>答錯</th></tr>" + rows.map(function (p) { return "<tr><td>" + p.id + " " + esc(p.title) + "</td><td>" + (tot[p.id] || 0) + "</td></tr>"; }).join("") + "</table><p class='dim'>錯最多的放最上面，可以挑來講解。</p>");
   }
   function csv() {
-    var R = H.rank || computeRank(), lines = [["名次", "組別", "來電者", "完成關數", "完成用時", "提示次數", "加碼答對", "投票", "推理正確", "最終時間"].concat(PUZ.map(function (p) { return p.id + "答錯"; }))];
-    R.forEach(function (r) { var s = H.groups[r.g]; lines.push([r.place, r.g, G.CALLERS[r.g].name, s.stage, s.doneAt != null ? fmt(s.doneAt) : "", s.hintCount, r.bonus, s.vote ? G.CALLERS[s.vote].name : "", r.voteOk ? "是" : "否", r.done ? fmt(r.fin) : ""].concat(PUZ.map(function (p) { return s.wrong[p.id] || 0; }))); });
+    var R = H.rank || computeRank(), lines = [["名次", "組別", "來電者", "完成關數", "完成用時", "提示次數", "深層線索", "指認兇手", "指認答對題數", "秘密任務", "最終時間"].concat(PUZ.map(function (p) { return p.id + "答錯"; }))];
+    R.forEach(function (r) { var s = H.groups[r.g]; lines.push([r.place, r.g, G.CALLERS[r.g].name, s.stage, s.doneAt != null ? fmt(s.doneAt) : "", s.hintCount, r.bonus, s.accuse ? G.SUSPECTS[s.accuse.who].name : "", r.accN, G.SECRET[r.g] ? (r.secret ? "成功" : "失敗") : "", r.done ? fmt(r.fin) : ""].concat(PUZ.map(function (p) { return s.wrong[p.id] || 0; }))); });
     var blob = new Blob(["﻿" + lines.map(function (l) { return l.join(","); }).join("\r\n")], { type: "text/csv" });
     var a = document.createElement("a"); a.href = URL.createObjectURL(blob); var d = new Date();
     a.download = "119號元素_成績_" + d.getFullYear() + (d.getMonth() + 1) + d.getDate() + "_" + d.getHours() + d.getMinutes() + ".csv"; a.click();

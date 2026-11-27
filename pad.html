@@ -8,8 +8,8 @@
 <title>消失的第 119 號元素・平板</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<script src="content.js?v=1.0"></script>
-<script src="audio/list.js?v=1.0"></script>
+<script src="content.js?v=2.0"></script>
+<script src="audio/list.js?v=2.0"></script>
 <style>
   :root { --bg:#0e1621; --card:#18232f; --card2:#202e3c; --line:#2c3b4a; --txt:#eef3f8; --dim:#93a4b5; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; --acc2:#9b7bff; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -148,6 +148,7 @@
   <div id="tabs">
     <button data-t="task" class="sel"><b>🎯</b>任務</button>
     <button data-t="sms"><b>💬</b>簡訊</button>
+    <button data-t="case"><b>🔍</b>案件</button>
     <button data-t="note"><b>📒</b>筆記</button>
   </div>
 </div>
@@ -360,8 +361,7 @@
     $("pause").classList.toggle("hide", !S.paused);
     if (!unlockedAudio) return;
     var g = gs();
-    if (S.phase !== "lobby" && g && !g.answered && !ringing && !inCall && S.phase === "play") startRing();
-    if (g && g.answered && !inCall && $("call").classList.contains("hide") === false) {}
+    if (g && !g.answered && !ringing && !inCall && (S.phase === "play" || S.phase === "exchange")) startRing();
     render(false);
   }
 
@@ -376,14 +376,16 @@
     $("barWho").textContent = "第 " + group + " 組｜" + C.name;
     var dh = ""; for (var i = 0; i < 4; i++) dh += '<i class="' + (g.stage > i ? "on" : "") + '"></i>'; $("barDots").innerHTML = dh;
     var tbs = document.querySelectorAll("#tabs button"); for (var j = 0; j < tbs.length; j++) tbs[j].classList.toggle("sel", tbs[j].dataset.t === tab);
-    var key = [tab, S.phase, g.stage, g.unlocked, g.pz, g.step, g.doneAt, (g.bonus || []).join(","), g.vote, S.revealed, S.ending].join("|");
+    var key = [tab, S.phase, g.stage, g.unlocked, g.pz, g.step, g.doneAt, (g.bonus || []).join(","), JSON.stringify(g.accuse || null), S.revealStep, S.ending].join("|");
     if (!force && key === lastRenderKey) return;
     lastRenderKey = key; ui = {}; submitting = false;   // 換到新題目：解除「防重複送出」
     var m = $("main");
     if (tab === "sms") { m.innerHTML = smsView(); return; }
     if (tab === "note") { m.innerHTML = noteView(); bindNote(); return; }
+    if (tab === "case") { m.innerHTML = caseView(); bindCase(); return; }
     if (S.phase === "lobby") { m.innerHTML = '<div class="card center"><div style="font-size:56px">📱</div><h2>準備完成</h2><p class="dim" style="font-size:20px">請保持這個畫面，等老師按「開始」。<br>手機響了就接起來！</p></div>'; return; }
-    if (S.phase === "testimony" || S.phase === "vote" || S.phase === "reveal" || S.phase === "end") { m.innerHTML = finaleView(); bindFinale(); return; }
+    if (S.phase === "accuse") { m.innerHTML = accuseView(); bindAccuse(); return; }
+    if (S.phase === "reveal" || S.phase === "end") { m.innerHTML = finaleView(); return; }
     if (!g.answered) { m.innerHTML = '<div class="card center"><h2>📞 有來電…</h2></div>'; return; }
     if (g.stage >= 4) { m.innerHTML = doneView(); bindDone(); return; }
     if (!g.unlocked) { m.innerHTML = goView(); bindGo(); return; }
@@ -461,7 +463,8 @@
   function puzzleView() {
     var g = gs(), p = curPuzzle(), st = p.steps[g.step], total = STG[g.stage].length;
     var h = '<div class="card"><div class="ptitle"><h2>' + esc(p.title) + '</h2><span class="n">第 ' + (g.stage + 1) + " 關・" + (g.pz + 1) + "/" + total + "</span></div>";
-    if (g.step === 0) h += '<div class="story">' + esc(p.story) + "</div>";
+    if (p.lab) h += '<div class="item" style="border:2px solid var(--wait)"><div class="t">🧰 這一站的器材</div><div class="d" style="font-size:17px;color:var(--txt);line-height:1.6">' + p.lab.materials.map(esc).join("<br>") + "</div></div>";
+    if (g.step === 0 || p.lab) h += '<div class="story">' + (p.lab ? "🔬 <b>動手做：</b>" : "") + esc(p.story) + "</div>";
     if (p.steps.length > 1) h += '<div class="dim" style="margin-top:8px;font-size:16px">小題 ' + (g.step + 1) + " / " + p.steps.length + "</div>";
     h += stepHTML(p, st, g.step) + "</div>";
     h += '<div class="actions"><button id="bHint">💡 提示</button>' + (st.table || st.type === "table" ? "" : '<button id="bPT2">📋 週期表</button>') + '<button class="pri" id="bSubmit">送出答案</button></div>';
@@ -474,7 +477,10 @@
     if (st.atom) h += '<div class="center"><div class="atom"><div class="nums"><span>' + st.atom.A + "</span><span>" + st.atom.Z + '</span></div><div class="s">' + st.atom.sym + "</div></div></div>";
     if (st.model) h += '<div class="center">' + modelSVG(st.model) + "</div>";
     if (st.table) h += '<button id="bPTin" style="margin-bottom:10px">📋 打開週期表</button>';
-    if (st.type === "choice") {
+    if (st.type === "multi") {
+      ui.multi = {};
+      h += '<div class="opts" id="multi">' + st.o.map(function (o, i) { return '<button data-i="' + i + '">☐ ' + esc(o) + "</button>"; }).join("") + "</div>";
+    } else if (st.type === "choice") {
       var ord = shuffled(st.o.length, seed); ui.ord = ord; ui.sel = -1;
       h += '<div class="opts" id="opts">' + ord.map(function (oi, i) { return '<button data-i="' + oi + '">' + "ABCD".charAt(i) + ". " + esc(st.o[oi]) + "</button>"; }).join("") + "</div>";
     } else if (st.type === "sort") {
@@ -507,6 +513,7 @@
     if ($("bPT2")) $("bPT2").onclick = openPT;
     $("bHint").onclick = function () { showHint(false); };
     if (st.type === "choice") $("opts").onclick = function (e) { var b = e.target.closest("button"); if (!b) return; ui.sel = +b.dataset.i; selIn($("opts"), b); };
+    if (st.type === "multi") $("multi").onclick = function (e) { var b = e.target.closest("button"); if (!b) return; var i = +b.dataset.i; ui.multi[i] = !ui.multi[i]; b.classList.toggle("sel", ui.multi[i]); b.textContent = (ui.multi[i] ? "☑ " : "☐ ") + st.o[i]; };
     if (st.type === "sort") m.querySelectorAll(".seg").forEach(function (sg) { sg.onclick = function (e) { var b = e.target.closest("button"); if (!b) return; ui.pick[sg.dataset.ii] = +b.dataset.b; selIn(sg, b); }; });
     if (st.type === "match") m.querySelectorAll("select").forEach(function (s) { s.onchange = function () { ui.match[s.dataset.r] = s.value; }; });
     if (st.type === "table") m.querySelectorAll(".pt button").forEach(function (b) { b.onclick = function () { ui.cell = b.dataset.s; m.querySelectorAll(".pt button").forEach(function (x) { x.classList.toggle("sel", x === b); }); }; });
@@ -525,6 +532,7 @@
   function check(st) {
     var m = $("main");
     if (st.type === "choice") return ui.sel < 0 ? null : (ui.sel === st.a ? 0 : 1);
+    if (st.type === "multi") { var any = false, wm = 0; for (var mi = 0; mi < st.o.length; mi++) { var on = !!ui.multi[mi]; if (on) any = true; if (on !== (st.a.indexOf(mi) >= 0)) wm++; } return any ? wm : null; }
     if (st.type === "sort") { var wrong = 0; for (var i = 0; i < st.items.length; i++) { if (!(i in ui.pick)) return null; if (ui.pick[i] !== st.items[i].a) wrong++; } return wrong; }
     if (st.type === "match") { var w2 = 0; for (var r = 0; r < st.rows.length; r++) { if (!ui.match[r]) return null; if (ui.match[r] !== st.rows[r].a) w2++; } return w2; }
     if (st.type === "table") return ui.cell == null ? null : (ui.cell === st.a ? 0 : 1);
@@ -582,16 +590,15 @@
     if (onYes) $("msgNo").onclick = function () { $("msgBox").classList.add("hide"); };
   }
 
-  /* ---------- 完成、加碼挑戰 ---------- */
+  /* ---------- 完成、深層調查 ---------- */
   function doneView() {
-    var g = gs(), h = '<div class="card center"><div class="piece">🎉</div><h2>任務完成！</h2><div style="font-size:20px;line-height:1.6">' + esc(C.done) + "</div></div>";
-    h += '<div class="card"><h2>🔒 ' + esc(C.name) + ' 的證詞（只有你們看得到，結局時公開）</h2><div class="testi"><span class="av">' + C.av + "</span><span>「" + esc(C.testimony) + "」</span></div></div>";
-    if (S.phase !== "play") return h;
+    var g = gs(), h = '<div class="card center"><div class="piece">🎉</div><h2>四關都完成了！</h2><div style="font-size:20px;line-height:1.6">' + esc(C.done) + '</div><p class="dim" style="font-size:18px">證物都放進「🔍 案件」了，記得去看。</p></div>';
+    if (S.phase !== "play" && S.phase !== "exchange") return h;
     var b = g.bonus || [null, null, null], idx = -1;
     for (var i = 0; i < 3; i++) if (b[i] == null) { idx = i; break; }
-    h += '<div class="card"><h2>⭐ 加碼挑戰（每題只能答一次，答對 -' + G.RULES.bonusSec + " 秒）</h2>";
-    h += '<div style="font-size:20px">' + b.map(function (x, i) { return "第 " + (i + 1) + " 題：" + (x == null ? "—" : x ? '<span class="ok">✔</span>' : '<span class="bad">✘</span>'); }).join("　") + "</div>";
-    if (idx < 0) { h += '<p style="font-size:20px">加碼挑戰完成！等老師進入結局。</p></div>'; return h; }
+    h += '<div class="card"><h2>🕵️ 深層調查（每題只能答一次）</h2><p style="font-size:19px;line-height:1.6">答對才拿得到深層線索（動機、匿名者的真面目……），總時間也 −' + G.RULES.bonusSec + " 秒。</p>";
+    h += '<div style="font-size:20px">' + b.map(function (x, i) { return "線索 " + (i + 1) + "：" + (x == null ? "🔒" : x ? '<span class="ok">✔ 已取得</span>' : '<span class="bad">✘ 錯失</span>'); }).join("　") + "</div>";
+    if (idx < 0) { h += '<p style="font-size:20px">深層調查結束！到「🔍 案件」整理線索，準備指認。</p></div>'; return h; }
     var st = BONUS[idx]; ui.bonusIdx = idx;
     h += stepHTML({ id: "B" + idx }, st, 0) + '<div class="actions">' + (st.table ? "" : '<button id="bPT2">📋 週期表</button>') + '<button class="pri" id="bBonus">送出（只有一次機會）</button></div><div class="fb" id="fb"></div></div>';
     return h;
@@ -605,40 +612,81 @@
     $("bBonus").onclick = function () {
       var r = check(st); if (r === null) { $("fb").innerHTML = '<span class="wait">還沒作答喔</span>'; return; }
       $("bBonus").disabled = true; send({ t: "bonus", i: ui.bonusIdx, ok: r === 0 });
-      $("fb").innerHTML = r === 0 ? '<span class="ok">✔ 答對了！</span>' : '<span class="bad">✘ 可惜答錯了</span>';
+      $("fb").innerHTML = r === 0 ? '<span class="ok">✔ 答對了！拿到深層線索</span>' : '<span class="bad">✘ 可惜答錯了，這條線索錯失</span>';
+    };
+  }
+
+  /* ---------- 🔍 案件：嫌疑人、證物、情報、推理表 ---------- */
+  var intelOpen = function () { return S && (S.phase === "exchange" || S.phase === "accuse" || S.phase === "reveal" || S.phase === "end"); };
+  function gridGet() { try { return JSON.parse(lsGet("hhm119Grid_" + group + "_" + (S && S.runId || "")) || "{}"); } catch (e) { return {}; } }
+  function gridSet(v) { lsSet("hhm119Grid_" + group + "_" + (S && S.runId || ""), JSON.stringify(v)); }
+  function caseView() {
+    var g = gs(), h = "<h2>🔍 案件檔案</h2>", grid = gridGet();
+    h += '<div class="card"><h2>👥 嫌疑人（點一下標記：❓懷疑 → ❌排除 → ⭐兇手）</h2>';
+    G.SUSPECTS.forEach(function (s) {
+      var m = grid[s.id] || 0, mk = ["❓", "❌", "⭐"][m];
+      h += '<div class="item" data-sus="' + s.id + '" style="cursor:pointer;' + (m === 1 ? "opacity:.45;" : "") + (m === 2 ? "border:2px solid var(--wait);" : "") + '"><div class="t">' + mk + " " + s.av + " " + esc(s.name) + '　<span class="dim" style="font-size:16px;font-weight:normal">' + esc(s.role) + '</span></div><div class="d">' + s.facts.map(esc).join("／") + "</div></div>";
+    });
+    h += "</div>";
+    h += '<div class="card"><h2>🧾 證物卡（每完成一關拿一張）</h2>';
+    var any = false;
+    for (var i = 0; i < 4; i++) if (g.stage > i) { any = true; var c = G.STATIONS[ROUTE[i]].card; h += '<div class="testi"><span class="av">' + G.STATIONS[ROUTE[i]].icon + "</span><span><b>" + esc(c.t) + "</b><br>" + esc(c.d) + "</span></div>"; }
+    if (!any) h += '<p class="dim" style="font-size:18px">還沒有證物。完成第 1 關就會拿到第一張。</p>';
+    h += "</div>";
+    h += '<div class="card"><h2>📨 ' + esc(C.name) + " 給你們的獨家情報</h2>";
+    if (intelOpen()) {
+      h += '<div class="testi"><span class="av">' + C.av + "</span><span>" + esc(G.INTEL[group]) + "</span></div>";
+      h += '<div class="testi"><span class="av">' + C.av + "</span><span><b>證詞：</b>「" + esc(C.testimony) + "」</span></div>";
+      h += '<p class="dim" style="font-size:17px">只有你們有這條情報。要不要告訴別組、要換什麼，你們自己決定。</p>';
+    } else h += '<p class="dim" style="font-size:18px">🔒 老師宣布「情報交換時間」後才會打開。</p>';
+    h += "</div>";
+    if (intelOpen() && G.SECRET[group]) h += '<div class="card" style="border:2px solid var(--acc2)"><h2>' + esc(G.SECRET[group].t) + '（只有你們看得到）</h2><p style="font-size:20px;line-height:1.6">' + esc(G.SECRET[group].d) + "</p></div>";
+    var deep = (g.bonus || []).map(function (x, i) { return x === true ? G.DEEP[i] : null; }).filter(Boolean);
+    if (deep.length) h += '<div class="card"><h2>🕵️ 深層線索</h2>' + deep.map(function (d) { return '<div class="testi"><span class="av">🗝️</span><span><b>' + esc(d.t) + "</b><br>" + esc(d.d) + "</span></div>"; }).join("") + "</div>";
+    return h;
+  }
+  function bindCase() {
+    $("main").querySelectorAll("[data-sus]").forEach(function (el) {
+      el.onclick = function () { var gd = gridGet(), id = el.dataset.sus; gd[id] = ((gd[id] || 0) + 1) % 3; gridSet(gd); render(true); };
+    });
+  }
+
+  /* ---------- 指認 ---------- */
+  function accuseView() {
+    var g = gs(), h = '<div class="card"><h2>⚖️ 最後指認</h2><p style="font-size:19px;line-height:1.6">全組討論好再送出，<b>只能送一次</b>。可以先到「🔍 案件」整理線索。</p>';
+    if (g.accuse) {
+      h += G.ACCUSE.map(function (q) { return '<p style="font-size:20px">' + esc(q.q) + "<br><b>" + esc(q.o[g.accuse[q.id]]) + "</b></p>"; }).join("");
+      return h + '<p class="dim" style="font-size:20px">✔ 已送出，等待老師揭曉…</p></div>';
+    }
+    ui.acc = {};
+    G.ACCUSE.forEach(function (q) {
+      var ord = shuffled(q.o.length, group * 31 + hashStr(q.id));
+      h += '<div class="prompt">' + esc(q.q) + '</div><div class="opts" data-q="' + q.id + '">' + ord.map(function (oi) { return '<button data-i="' + oi + '">' + esc(q.o[oi]) + "</button>"; }).join("") + "</div>";
+    });
+    return h + '<button class="big pri" id="bAccuse">送出指認（不能修改）</button><div class="fb" id="fb"></div></div>';
+  }
+  function bindAccuse() {
+    if (!$("bAccuse")) return;
+    $("main").querySelectorAll(".opts[data-q]").forEach(function (box) {
+      box.onclick = function (e) { var b = e.target.closest("button"); if (!b) return; ui.acc[box.dataset.q] = +b.dataset.i; selIn(box, b); };
+    });
+    $("bAccuse").onclick = function () {
+      for (var i = 0; i < G.ACCUSE.length; i++) if (!(G.ACCUSE[i].id in ui.acc)) { $("fb").innerHTML = '<span class="wait">四題都要選喔</span>'; return; }
+      $("bAccuse").disabled = true; send({ t: "accuse", ans: ui.acc });
     };
   }
 
   /* ---------- 結局 ---------- */
   function finaleView() {
-    var g = gs(), h = "";
-    if (g.stage < 4) h += '<div class="card center"><h2>⏰ 調查時間結束</h2><p class="dim" style="font-size:19px">你們完成了 ' + g.stage + " / 4 關。來看看大家的證詞吧！</p></div>";
-    h += '<div class="card"><h2>🗣 九位來電者的證詞</h2><p class="dim" style="font-size:18px">其中只有一個人說的話違反科學。</p>';
-    for (var k = 1; k <= 9; k++) { var c = G.CALLERS[k], bad = S.revealed && !c.truth; h += '<div class="testi" style="' + (bad ? "border:2px solid var(--bad)" : "") + '"><span class="av">' + c.av + "</span><span><b>" + k + "．" + esc(c.name) + "</b>：「" + esc(c.testimony) + "」" + (bad ? '<br><span class="bad">❌ ' + esc(c.why) + "</span>" : "") + "</span></div>"; }
+    var g = gs(), h = '<div class="card"><h2>🔎 真相揭曉中…請看白板</h2>';
+    if (g.accuse) h += G.ACCUSE.map(function (q) { var my = g.accuse[q.id], ok = my === q.a; return '<p style="font-size:20px">' + esc(q.q) + "<br>你們：<b>" + esc(q.o[my]) + "</b>" + (S.revealStep >= 1 ? (ok ? ' <span class="ok">✔ 正確（−' + q.sec + " 秒）</span>" : ' <span class="bad">✘</span>（答案：' + esc(q.o[q.a]) + "）") : "") + "</p>"; }).join("");
+    else h += '<p style="font-size:20px">你們沒有送出指認。</p>';
     h += "</div>";
-    if (S.phase === "vote" || S.phase === "reveal" || S.phase === "end") {
-      h += '<div class="card"><h2>🗳 誰在說謊？</h2>';
-      if (g.vote == null && S.phase === "vote") {
-        h += '<div class="vote" id="vote">' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(function (k) { return '<button data-k="' + k + '"><b>' + G.CALLERS[k].av + "</b>" + esc(G.CALLERS[k].name) + "</button>"; }).join("") + '</div><button class="big pri" id="bVote" disabled>確定投票（投了不能改）</button>';
-      } else if (g.vote == null) h += '<p style="font-size:20px">你們沒有投票。</p>';
-      else {
-        h += '<p style="font-size:22px">你們投給：' + G.CALLERS[g.vote].av + " " + esc(G.CALLERS[g.vote].name) + "</p>";
-        if (S.revealed) h += G.CALLERS[g.vote].truth ? '<p class="bad" style="font-size:22px">可惜，說謊的不是他。</p>' : '<p class="ok" style="font-size:24px">🎯 推理正確！總時間 -' + G.RULES.voteSec + " 秒</p>";
-        else h += '<p class="dim" style="font-size:20px">等待老師揭曉…</p>';
-      }
-      h += "</div>";
-    }
     if (S.phase === "end" && S.rank) {
       var me = null; S.rank.forEach(function (r) { if (r.g === group) me = r; });
       if (me) h += '<div class="card center"><h2>🏆 你們是第 ' + me.place + " 名</h2><p style=\"font-size:20px\">" + esc(me.text) + "</p></div>";
     }
     return h;
-  }
-  function bindFinale() {
-    if (!$("vote")) return;
-    var pick = null;
-    $("vote").onclick = function (e) { var b = e.target.closest("button"); if (!b) return; pick = +b.dataset.k; selIn($("vote"), b); $("bVote").disabled = false; };
-    $("bVote").onclick = function () { if (!pick) return; $("bVote").disabled = true; send({ t: "vote", who: pick }); };
   }
 
   /* ---------- 週期表 ---------- */
