@@ -7,8 +7,8 @@
 <title>消失的第 119 號元素・白板</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="content.js?v=2.6"></script>
-<script src="audio/list.js?v=2.6"></script>
+<script src="content.js?v=2.7"></script>
+<script src="audio/list.js?v=2.7"></script>
 <style>
   :root { --bg:#0d141d; --card:#172230; --card2:#1f2d3c; --line:#2c3b4a; --txt:#f1f5f9; --dim:#9fb0c1; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; --acc2:#9b7bff; }
   * { box-sizing:border-box; }
@@ -157,7 +157,7 @@
   function stateFor(g) { return { t: "state", phase: H.phase, paused: !!H.pausedAt, revealStep: H.revealStep || 0, runId: H.startAt, gs: H.groups[g], rank: H.phase === "end" ? H.rank : null }; }
   function push(g) { send(g, stateFor(g)); }
   function pushAll() { for (var g = 1; g <= N; g++) push(g); }
-  function alive(g) { var s = slots[g]; return !!(s && s.conn && s.conn.open && now() - s.last < 7000); }
+  function alive(g) { var s = slots[g]; return !!(s && s.conn && s.conn.open && now() - s.last < 12000); }
 
   function onConn(c) {
     var myG = null;
@@ -166,7 +166,7 @@
       if (d.t === "hello") {
         var g = parseInt(d.g, 10); if (!(g >= 1 && g <= N)) return;
         var dev = String(d.dev || "").slice(0, 20), s = slots[g];
-        var busy = s && s.conn && s.conn !== c && s.conn.open && now() - s.last < 7000 && s.dev !== dev;
+        var busy = s && s.conn && s.conn !== c && s.conn.open && now() - s.last < 12000 && s.dev !== dev;
         if (busy && !d.force) { try { c.send({ t: "taken", g: g }); } catch (e) {} return; }
         if (s && s.conn && s.conn !== c) { try { s.conn.send({ t: "kicked" }); s.conn.close(); } catch (e) {} }
         myG = g; slots[g] = { conn: c, dev: dev, last: now() };
@@ -180,12 +180,12 @@
     });
     c.on("close", function () { render(); });
   }
-  setInterval(function () { for (var g in slots) try { if (slots[g].conn.open) slots[g].conn.send({ t: "ping", id: now() }); } catch (e) {} }, 2000);
+  setInterval(function () { for (var g in slots) try { if (slots[g].conn.open) slots[g].conn.send({ t: "ping", id: now() }); } catch (e) {} }, 4000);
 
   function openRoom(tries, code) {
     code = code || H.code || String(Math.floor(1000 + Math.random() * 9000));
     if (typeof Peer === "undefined") { $("joinHint").textContent = "連線元件載入失敗（沒有網路？）"; return; }
-    peer = new Peer(PREFIX + code);
+    peer = new Peer(PREFIX + code, G.PEER_OPTS);
     peer.on("open", function () {
       H.code = code; save(); $("code").textContent = code;
       var url = location.href.replace(/[^\/]*(\?.*)?(#.*)?$/, "") + "pad.html?r=" + code;

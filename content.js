@@ -434,12 +434,21 @@
   function stagesFor(g) { var r = routeOf(g), st = [stage1(g), stage2(g), stage3(g), stage4(g)]; return st.map(function (s, i) { return [stationPuzzle(r[i])].concat(s); }); }
 
   var GAME = {
-    VER: "v2.6", title: "消失的第 119 號元素",
+    VER: "v2.7", title: "消失的第 119 號元素",
     EL: EL, PT: PT, LOCS: LOCS, CALLERS: CALLERS, FINALE: FINALE, STAGE_NAMES: STAGE_NAMES,
     STATIONS: STATIONS, SUSPECTS: SUSPECTS, CULPRIT: CULPRIT, INTEL: INTEL, SECRET: SECRET, DEEP: DEEP, ACCUSE: ACCUSE, REVEAL_STEPS: REVEAL_STEPS,
     routeOf: routeOf, stagesFor: stagesFor, bonus: bonus,
-    RULES: { lockSec: 10, hintSec: 30, bonusSec: 20, voteSec: 30, defaultMin: 50, exchangeMin: 10 }
+    RULES: { lockSec: 10, hintSec: 30, bonusSec: 20, voteSec: 30, defaultMin: 50, exchangeMin: 10 },
+    // 連線設定：Google STUN（問路）＋ Metered 免費中繼（帳號 element119class，Global 500MB／月，用完就停、不扣款，不用信用卡）
+    // PeerJS 內建中繼已停止服務；同一個 Wi-Fi 擋裝置互連時，要靠這裡的中繼才連得上。憑證外洩最多是額度被用完，可到 Metered 後台刪除重建。
+    PEER_OPTS: { config: { iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun.relay.metered.ca:80" },
+      { urls: ["turn:global.relay.metered.ca:80", "turn:global.relay.metered.ca:80?transport=tcp", "turn:global.relay.metered.ca:443", "turns:global.relay.metered.ca:443?transport=tcp"], username: "02b80286663b1597d022715b", credential: "cvjp+ChCR9e9QxwG" }
+    ] } }
   };
+  // 測試用：網址加 ?relay=1 → 強制全部走中繼（模擬「同 Wi-Fi 不准裝置互連」的學校網路）
+  if (typeof location !== "undefined" && /[?&]relay=1/.test(location.search)) GAME.PEER_OPTS.config.iceTransportPolicy = "relay";
   if (typeof window !== "undefined") window.GAME = GAME;
   if (typeof module !== "undefined") module.exports = GAME;
 })();

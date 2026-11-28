@@ -53,7 +53,7 @@
 </style>
 </head>
 <body>
-<div class="ver">v0.1</div>
+<div class="ver">v0.2</div>
 
 <!-- 1. 加入 -->
 <div class="scr show" id="sJoin">
@@ -189,7 +189,7 @@
     }
     if (peer && !peer.destroyed && peer.open) { dial(); return; }
     try { if (peer) peer.destroy(); } catch (e) {}
-    peer = new Peer();
+    peer = new Peer({ config: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.relay.metered.ca:80" }, { urls: ["turn:global.relay.metered.ca:80", "turn:global.relay.metered.ca:80?transport=tcp", "turn:global.relay.metered.ca:443", "turns:global.relay.metered.ca:443?transport=tcp"], username: "02b80286663b1597d022715b", credential: "cvjp+ChCR9e9QxwG" }] } });
     peer.on("open", dial);
     peer.on("disconnected", function () { try { peer.reconnect(); } catch (e) {} });
     peer.on("error", function (e) {

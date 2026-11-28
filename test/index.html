@@ -45,7 +45,7 @@
 </head>
 <body>
 <header>
-  <h1>連線測試・白板端</h1><span class="ver">v0.1</span>
+  <h1>連線測試・白板端</h1><span class="ver">v0.2（含中繼）</span>
   <span class="sp"></span>
   <button id="bRing" class="main" disabled>📞 全部響鈴測試</button>
   <button id="bQR">📷 顯示掃描測試 QR</button>
@@ -180,7 +180,7 @@
     code = code || savedCode() || String(Math.floor(1000 + Math.random() * 9000));
     try { localStorage.setItem("hhmysCode", code); } catch (e) {}
     if (typeof Peer === "undefined") { $("joinHint").textContent = "連線元件載入失敗（沒有網路？）"; return; }
-    peer = new Peer(PREFIX + code);
+    peer = new Peer(PREFIX + code, { config: { iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun.relay.metered.ca:80" }, { urls: ["turn:global.relay.metered.ca:80", "turn:global.relay.metered.ca:80?transport=tcp", "turn:global.relay.metered.ca:443", "turns:global.relay.metered.ca:443?transport=tcp"], username: "02b80286663b1597d022715b", credential: "cvjp+ChCR9e9QxwG" }] } });
     peer.on("open", function () {
       $("code").textContent = code;
       var base = location.href.replace(/[^\/]*(\?.*)?(#.*)?$/, "");
