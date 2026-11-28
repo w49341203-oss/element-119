@@ -7,8 +7,8 @@
 <title>消失的第 119 號元素・白板</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="content.js?v=2.3"></script>
-<script src="audio/list.js?v=2.3"></script>
+<script src="content.js?v=2.4"></script>
+<script src="audio/list.js?v=2.4"></script>
 <style>
   :root { --bg:#0d141d; --card:#172230; --card2:#1f2d3c; --line:#2c3b4a; --txt:#f1f5f9; --dim:#9fb0c1; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; --acc2:#9b7bff; }
   * { box-sizing:border-box; }
@@ -94,6 +94,7 @@
     <button id="bPlus">＋5 分鐘</button>
     <button class="pri" id="bFinale">📨 開始情報交換</button>
   </span>
+  <button id="bMusic" title="大廳背景音樂（開／關）">🎵 音樂：關</button>
   <button id="bFs">⛶ 全螢幕</button>
   <button class="warn" id="bReset">重置</button>
 </header>
@@ -474,8 +475,45 @@
     a.download = "119號元素_成績_" + d.getFullYear() + (d.getMonth() + 1) + d.getDate() + "_" + d.getHours() + d.getMinutes() + ".csv"; a.click();
   }
 
+  /* ---------- 大廳背景音樂（只在大廳播；預設關，老師按 🎵 開；設定會記住） ----------
+     用 Web Audio 播放，循環時沒有空隙；按「開始」時 1.5 秒淡出，重置回大廳再淡入。 */
+  var BGM = { on: false, ctx: null, buf: null, src: null, gain: null, loading: false, playing: false, VOL: 0.45 };
+  try { BGM.on = localStorage.getItem("hhm119Music") === "1"; } catch (e) {}
+  function bgmBtn() { var b = $("bMusic"); b.textContent = BGM.on ? "🎵 音樂：開" : "🎵 音樂：關"; b.style.opacity = BGM.on ? "1" : ".6"; }
+  function bgmLoad(cb) {
+    if (BGM.buf) { cb(); return; } if (BGM.loading) return; BGM.loading = true;
+    fetch("audio/bgm_lobby.mp3?v=" + VER).then(function (r) { return r.arrayBuffer(); })
+      .then(function (ab) { return new Promise(function (ok, no) { BGM.ctx.decodeAudioData(ab, ok, no); }); })
+      .then(function (b) { BGM.buf = b; BGM.loading = false; cb(); })
+      .catch(function () { BGM.loading = false; });
+  }
+  function bgmStart() {
+    if (BGM.playing) return;
+    if (!BGM.ctx) { var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; BGM.ctx = new AC(); BGM.gain = BGM.ctx.createGain(); BGM.gain.gain.value = 0; BGM.gain.connect(BGM.ctx.destination); }
+    if (BGM.ctx.state === "suspended") BGM.ctx.resume();
+    BGM.playing = true;
+    bgmLoad(function () {
+      if (!BGM.playing || BGM.src) return;
+      var s = BGM.ctx.createBufferSource(); s.buffer = BGM.buf; s.loop = true; s.connect(BGM.gain); s.start(); BGM.src = s;
+      var t = BGM.ctx.currentTime; BGM.gain.gain.cancelScheduledValues(t); BGM.gain.gain.setValueAtTime(BGM.gain.gain.value, t); BGM.gain.gain.linearRampToValueAtTime(BGM.VOL, t + 1.5);
+    });
+  }
+  function bgmStop() {
+    if (!BGM.playing) return; BGM.playing = false;
+    if (!BGM.ctx || !BGM.src) return;
+    var s = BGM.src, t = BGM.ctx.currentTime; BGM.src = null;
+    BGM.gain.gain.cancelScheduledValues(t); BGM.gain.gain.setValueAtTime(BGM.gain.gain.value, t); BGM.gain.gain.linearRampToValueAtTime(0, t + 1.5);
+    setTimeout(function () { try { s.stop(); } catch (e) {} }, 1600);
+  }
+  function bgmSync() { if (BGM.on && H.phase === "lobby") bgmStart(); else bgmStop(); }
+  $("bMusic").onclick = function () { BGM.on = !BGM.on; try { localStorage.setItem("hhm119Music", BGM.on ? "1" : "0"); } catch (e) {} bgmBtn(); bgmSync(); };
+  // 上次設定是「開」：瀏覽器規定要先點一下畫面才能出聲，所以第一次點畫面時才開始播
+  document.addEventListener("pointerdown", function first() { document.removeEventListener("pointerdown", first, true); setTimeout(bgmSync, 0); }, true);
+  setInterval(bgmSync, 1000);
+  bgmBtn();
+
   render(); openRoom(0);
-  window.__host = { get H() { return H; }, slots: slots, handle: handle, computeRank: computeRank, render: render };
+  window.__host = { get H() { return H; }, bgm: BGM, slots: slots, handle: handle, computeRank: computeRank, render: render };
 })();
 </script>
 </body>
