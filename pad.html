@@ -8,8 +8,8 @@
 <title>消失的第 119 號元素・平板</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<script src="content.js?v=2.4"></script>
-<script src="audio/list.js?v=2.4"></script>
+<script src="content.js?v=2.5"></script>
+<script src="audio/list.js?v=2.5"></script>
 <style>
   :root { --bg:#0e1621; --card:#18232f; --card2:#202e3c; --line:#2c3b4a; --txt:#eef3f8; --dim:#93a4b5; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; --acc2:#9b7bff; }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -234,20 +234,46 @@
   function send(o) { try { if (conn && conn.open) conn.send(o); } catch (e) {} }
   function netOn(on) { $("net").classList.toggle("off", !on); }
   function scheduleRetry() { clearTimeout(retryT); retryT = setTimeout(connect, 3000); }
+  // 連線分三步，畫面顯示卡在哪一步；任何一步卡超過 12 秒就重來（之前卡住時會永遠停在「連線中…」）
+  var tries = 0, watchT = null, cstep = "";
+  var STEP_MSG = {
+    server: "① 正在連上連線服務…",
+    dial: "② 已連上連線服務，正在找白板（代碼 {c}）…",
+    hello: "③ 已連上白板，等白板回應…"
+  };
+  var STUCK_MSG = {
+    server: "① 連不上連線服務：這個網路可能擋住了連線服務，或網路很慢。",
+    dial: "② 找得到房間，但連不進白板：網路可能擋住了平板和白板直接連線。",
+    hello: "③ 連上了但白板沒回應：白板的網頁是不是關掉了、或電腦睡著了？"
+  };
+  var lastStuck = "";
+  function setStep(s) { cstep = s; if (!joined) joinStat(STEP_MSG[s].replace("{c}", code) + (tries > 1 ? "（第 " + tries + " 次嘗試）" : "") + (lastStuck ? '<br><span class="bad" style="font-size:16px">上一次卡住：' + lastStuck + "</span>" : ""), "wait"); }
+  function armWatch() {
+    clearTimeout(watchT);
+    watchT = setTimeout(function () {
+      if (stopped || (joined && conn && conn.open)) return;
+      lastStuck = STUCK_MSG[cstep];
+      if (!joined) joinStat(STUCK_MSG[cstep] + "<br>自動重試中…（第 " + (tries + 1) + " 次）", "bad");
+      try { if (peer) peer.destroy(); } catch (e) {} peer = null;
+      scheduleRetry();
+    }, 12000);
+  }
   function connect() {
     clearTimeout(retryT);
     if (typeof Peer === "undefined") { joinStat("連線元件載入失敗（沒有網路？）", "bad"); return; }
-    if (!joined) joinStat("連線中…", "wait");
+    tries++; armWatch();
     function dial() {
+      setStep("dial");
       var old = conn; conn = null; try { if (old) old.close(); } catch (e) {}
       var c = peer.connect(PREFIX + code, { serialization: "json", reliable: true }); conn = c;
-      c.on("open", function () { if (c === conn) send({ t: "hello", g: group, dev: devId, ver: VER, force: force }); });
+      c.on("open", function () { if (c === conn) { setStep("hello"); send({ t: "hello", g: group, dev: devId, ver: VER, force: force }); } });
       c.on("data", function (d) { if (c === conn) onData(d); });
       c.on("close", function () { if (c !== conn || stopped) return; netOn(false); scheduleRetry(); });
       c.on("error", function () { if (c === conn && !stopped) scheduleRetry(); });
     }
     if (peer && !peer.destroyed && peer.open) { dial(); return; }
     try { if (peer) peer.destroy(); } catch (e) {}
+    setStep("server");
     peer = new Peer();
     peer.on("open", dial);
     peer.on("disconnected", function () { try { peer.reconnect(); } catch (e) {} });
@@ -268,12 +294,14 @@
     if (!d || typeof d !== "object") return;
     if (d.t === "ping") { send({ t: "pong", id: d.id }); return; }
     if (d.t === "welcome") {
+      clearTimeout(watchT); tries = 0; lastStuck = "";
       var first = !joined; joined = true; force = false; netOn(true);
       if (first) showScreen(unlockedAudio ? "sGame" : "sReady");
       if (unlockedAudio) send({ t: "ready" });
       return;
     }
     if (d.t === "taken") {
+      clearTimeout(watchT);
       showScreen("sJoin");
       joinStat('第 ' + group + ' 組已經有別台平板在用。<br><button id="bForce" style="margin-top:10px">原本那台壞了，把這組換到這台</button>', "bad");
       $("bForce").onclick = function () { force = true; send({ t: "hello", g: group, dev: devId, ver: VER, force: true }); };
