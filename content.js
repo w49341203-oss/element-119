@@ -434,7 +434,7 @@
   function stagesFor(g) { var r = routeOf(g), st = [stage1(g), stage2(g), stage3(g), stage4(g)]; return st.map(function (s, i) { return [stationPuzzle(r[i])].concat(s); }); }
 
   var GAME = {
-    VER: "v2.5", title: "消失的第 119 號元素",
+    VER: "v2.6", title: "消失的第 119 號元素",
     EL: EL, PT: PT, LOCS: LOCS, CALLERS: CALLERS, FINALE: FINALE, STAGE_NAMES: STAGE_NAMES,
     STATIONS: STATIONS, SUSPECTS: SUSPECTS, CULPRIT: CULPRIT, INTEL: INTEL, SECRET: SECRET, DEEP: DEEP, ACCUSE: ACCUSE, REVEAL_STEPS: REVEAL_STEPS,
     routeOf: routeOf, stagesFor: stagesFor, bonus: bonus,

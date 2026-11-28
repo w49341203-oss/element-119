@@ -7,8 +7,8 @@
 <title>消失的第 119 號元素・白板</title>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="content.js?v=2.5"></script>
-<script src="audio/list.js?v=2.5"></script>
+<script src="content.js?v=2.6"></script>
+<script src="audio/list.js?v=2.6"></script>
 <style>
   :root { --bg:#0d141d; --card:#172230; --card2:#1f2d3c; --line:#2c3b4a; --txt:#f1f5f9; --dim:#9fb0c1; --ok:#3ddc84; --bad:#ff5c5c; --wait:#f5c542; --acc:#4fb3ff; --acc2:#9b7bff; }
   * { box-sizing:border-box; }
@@ -475,9 +475,9 @@
     a.download = "119號元素_成績_" + d.getFullYear() + (d.getMonth() + 1) + d.getDate() + "_" + d.getHours() + d.getMinutes() + ".csv"; a.click();
   }
 
-  /* ---------- 大廳背景音樂（只在大廳播；預設關，老師按 🎵 開；設定會記住） ----------
-     用 Web Audio 播放，循環時沒有空隙；按「開始」時 1.5 秒淡出，重置回大廳再淡入。 */
-  var BGM = { on: false, ctx: null, buf: null, src: null, gain: null, loading: false, playing: false, VOL: 0.45 };
+  /* ---------- 背景音樂（全程播放；預設關，老師按 🎵 開；設定會記住） ----------
+     用 Web Audio 播放，循環時沒有空隙；音量依階段自動調整（見 bgmTarget）。 */
+  var BGM = { on: false, ctx: null, buf: null, src: null, gain: null, loading: false, playing: false, lastV: null };
   try { BGM.on = localStorage.getItem("hhm119Music") === "1"; } catch (e) {}
   function bgmBtn() { var b = $("bMusic"); b.textContent = BGM.on ? "🎵 音樂：開" : "🎵 音樂：關"; b.style.opacity = BGM.on ? "1" : ".6"; }
   function bgmLoad(cb) {
@@ -495,7 +495,7 @@
     bgmLoad(function () {
       if (!BGM.playing || BGM.src) return;
       var s = BGM.ctx.createBufferSource(); s.buffer = BGM.buf; s.loop = true; s.connect(BGM.gain); s.start(); BGM.src = s;
-      var t = BGM.ctx.currentTime; BGM.gain.gain.cancelScheduledValues(t); BGM.gain.gain.setValueAtTime(BGM.gain.gain.value, t); BGM.gain.gain.linearRampToValueAtTime(BGM.VOL, t + 1.5);
+      var t = BGM.ctx.currentTime, v = bgmTarget(); BGM.lastV = v; BGM.gain.gain.cancelScheduledValues(t); BGM.gain.gain.setValueAtTime(BGM.gain.gain.value, t); BGM.gain.gain.linearRampToValueAtTime(v, t + 1.5);
     });
   }
   function bgmStop() {
@@ -505,7 +505,21 @@
     BGM.gain.gain.cancelScheduledValues(t); BGM.gain.gain.setValueAtTime(BGM.gain.gain.value, t); BGM.gain.gain.linearRampToValueAtTime(0, t + 1.5);
     setTimeout(function () { try { s.stop(); } catch (e) {} }, 1600);
   }
-  function bgmSync() { if (BGM.on && H.phase === "lobby") bgmStart(); else bgmStop(); }
+  // 全程播放，音量依階段自動調整（2026-11-28 Helen：主機從頭到尾都要有音樂）
+  //  大廳 0.45｜開始後 75 秒內（各組在聽來電）0.10｜闖關、交換、指認、揭曉 0.28｜白板自己在播語音（響鈴、旁白、博士留言）時 0.06
+  function bgmTarget() {
+    if (!au.paused && !au.ended) return 0.06;
+    if (H.phase === "lobby") return 0.45;
+    if (H.phase === "play" && H.startAt && now() - H.startAt < 75000) return 0.10;
+    return 0.28;
+  }
+  function bgmRamp() {
+    if (!BGM.src || !BGM.gain) return;
+    var v = bgmTarget(); if (BGM.lastV === v) return; BGM.lastV = v;
+    var t = BGM.ctx.currentTime; BGM.gain.gain.cancelScheduledValues(t); BGM.gain.gain.setValueAtTime(BGM.gain.gain.value, t); BGM.gain.gain.linearRampToValueAtTime(v, t + 1.0);
+  }
+  function bgmSync() { if (BGM.on) { bgmStart(); bgmRamp(); } else bgmStop(); }
+  ["play", "pause", "ended"].forEach(function (ev) { au.addEventListener(ev, bgmSync); });
   $("bMusic").onclick = function () { BGM.on = !BGM.on; try { localStorage.setItem("hhm119Music", BGM.on ? "1" : "0"); } catch (e) {} bgmBtn(); bgmSync(); };
   // 上次設定是「開」：瀏覽器規定要先點一下畫面才能出聲，所以第一次點畫面時才開始播
   document.addEventListener("pointerdown", function first() { document.removeEventListener("pointerdown", first, true); setTimeout(bgmSync, 0); }, true);
